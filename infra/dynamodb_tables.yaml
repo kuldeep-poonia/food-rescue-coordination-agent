@@ -21,6 +21,10 @@ Resources:
           AttributeType: S
         - AttributeName: ready_by
           AttributeType: S
+        - AttributeName: service_region
+          AttributeType: S
+        - AttributeName: date_status
+          AttributeType: S
       KeySchema:
         - AttributeName: donation_id
           KeyType: HASH
@@ -30,6 +34,14 @@ Resources:
             - AttributeName: status
               KeyType: HASH
             - AttributeName: ready_by
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: region-date-status-index
+          KeySchema:
+            - AttributeName: service_region
+              KeyType: HASH
+            - AttributeName: date_status
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
