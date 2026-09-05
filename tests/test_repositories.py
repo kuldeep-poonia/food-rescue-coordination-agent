@@ -71,7 +71,7 @@ class MockDynamoDBTable:
         ExpressionAttributeNames: dict[str, str] | None = None,
         ExpressionAttributeValues: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del UpdateExpression, ExpressionAttributeNames
+        del ExpressionAttributeNames
         with self._lock:
             pk_val = str(next(iter(Key.values())))
             item = self._items.get(pk_val)
@@ -121,14 +121,48 @@ class MockDynamoDBTable:
                         "UpdateItem",
                     )
 
+            # Evaluate conditional checks for donations unclaim
+            unclaim_cond = "matched_recipient_id = :recipient_id"
+            if ConditionExpression and unclaim_cond in ConditionExpression:
+                exp_rec = (
+                    ExpressionAttributeValues.get(":recipient_id")
+                    if ExpressionAttributeValues
+                    else None
+                )
+                exp_st = (
+                    ExpressionAttributeValues.get(":matched_status")
+                    if ExpressionAttributeValues
+                    else None
+                )
+                if (
+                    item.get("matched_recipient_id") != exp_rec
+                    or item.get("status") != exp_st
+                ):
+                    raise ClientError(
+                        {"Error": {"Code": "ConditionalCheckFailedException"}},
+                        "UpdateItem",
+                    )
+
             # Apply state updates
             if ExpressionAttributeValues:
-                if ":recipient_id" in ExpressionAttributeValues:
+                if "REMOVE matched_recipient_id" in UpdateExpression:
+                    item["status"] = "reported"
+                    item["matched_recipient_id"] = None
+                elif ":recipient_id" in ExpressionAttributeValues:
                     rec_id = ExpressionAttributeValues[":recipient_id"]
                     item["matched_recipient_id"] = rec_id
                     item["status"] = "matched"
+
                 if ":qty" in ExpressionAttributeValues:
-                    item["capacity_kg_remaining"] -= ExpressionAttributeValues[":qty"]
+                    if "+ :qty" in UpdateExpression:
+                        item["capacity_kg_remaining"] += ExpressionAttributeValues[
+                            ":qty"
+                        ]
+                    else:
+                        item["capacity_kg_remaining"] -= ExpressionAttributeValues[
+                            ":qty"
+                        ]
+
                 if ":new_state" in ExpressionAttributeValues:
                     item["status"] = ExpressionAttributeValues[":new_state"]
 
@@ -279,6 +313,34 @@ def test_recipient_capacity_atomic_deduction(
     # Second deduction exceeding remaining capacity (attempt 50kg when only 40kg left)
     with pytest.raises(InsufficientCapacityError):
         repo.deduct_capacity(recipient.recipient_id, 50.0)
+
+
+def test_recipient_capacity_atomic_restoration(
+    mock_dynamodb: MockDynamoDBResource,
+) -> None:
+    """Verify capacity restoration atomically increments quota and checks existence."""
+    repo = RecipientsRepository(dynamodb_resource=mock_dynamodb)
+    recipient = Recipient(
+        recipient_id="rec-restore-test",
+        organization_name="Community Kitchen",
+        contact_name="Sarah Connor",
+        contact_phone="+12125550199",
+        address="400 Oak St",
+        coordinates=Coordinates(latitude=40.75, longitude=-74.01),
+        capacity_kg_remaining=50.0,
+        service_region="metro-core",
+    )
+    repo.create_recipient(recipient)
+
+    # Deduct 30kg -> remaining 20kg
+    assert repo.deduct_capacity(recipient.recipient_id, 30.0) is True
+
+    # Restore 30kg -> back to 50kg
+    assert repo.restore_capacity(recipient.recipient_id, 30.0) is True
+
+    # Attempt restore on non-existent recipient raises KeyError
+    with pytest.raises(KeyError, match="does not exist"):
+        repo.restore_capacity("rec-non-existent", 30.0)
 
 
 def test_volunteer_availability_conditional_transition(

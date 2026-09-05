@@ -178,3 +178,48 @@ class RecipientsRepository:
                     f"Recipient {recipient_id} does not have {quantity_kg}kg capacity"
                 ) from exc
             raise
+
+    @with_dynamodb_retry
+    def restore_capacity(self, recipient_id: str, quantity_kg: float) -> bool:
+        """Atomically restore recipient capacity upon compensation or cancellation.
+
+        Args:
+            recipient_id: Target recipient organization identifier.
+            quantity_kg: Weight in kilograms to restore.
+
+        Returns:
+            True if capacity restored atomically.
+
+        Raises:
+            KeyError: If recipient does not exist in the database.
+            ClientError: If unexpected DynamoDB error occurs.
+        """
+        qty_decimal = Decimal(str(quantity_kg))
+        try:
+            self._table.update_item(
+                Key={"recipient_id": recipient_id},
+                UpdateExpression=(
+                    "SET capacity_kg_remaining = capacity_kg_remaining + :qty"
+                ),
+                ConditionExpression="attribute_exists(recipient_id)",
+                ExpressionAttributeValues={
+                    ":qty": qty_decimal,
+                },
+            )
+            LOGGER.info(
+                "Restored %.2f kg to recipient %s",
+                quantity_kg,
+                recipient_id,
+            )
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "ConditionalCheckFailedException":
+                LOGGER.warning(
+                    "Capacity restore failed: recipient %s does not exist",
+                    recipient_id,
+                )
+                raise KeyError(
+                    f"Recipient {recipient_id} does not exist"
+                ) from exc
+            raise
