@@ -135,7 +135,7 @@ Every index in the data layer maps 1:1 to an operational access pattern:
    - `QueryAvailableVolunteers`: Query GSI `region-status-index` (`service_region = :region AND status = 'AVAILABLE'`). Used during assignment to discover unassigned drivers in the operational zone.
 
 4. **Matches & Audit Log Table**:
-   - `RecordAuditEvent`: Conditional PutItem on `attribute_not_exists(idempotency_key)` on PK `idempotency_key`. Guarantees table-wide deduplication against replayed requests or Lambda retries.
+   - `RecordAuditEvent`: Conditional PutItem on `attribute_not_exists(idempotency_key)` on PK `idempotency_key`. Guarantees table-wide deduplication against replayed requests or Lambda retries. When a duplicate key is encountered, returns `False`, which callers must treat as a successful no-op (never retry or escalate).
    - `QueryDonationAuditTrail`: Query GSI `donation-audit-index` (`donation_id = :id` ordered by `timestamp` ASC). Used by coordinators to inspect the immutable chronological lifecycle.
 
 ---
