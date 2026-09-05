@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 
 from config import AppConfig, load_app_configuration
 from dynamodb_retry import with_dynamodb_retry
-from models import Volunteer
+from models import Volunteer, VolunteerStatus
 from redaction import sanitize_payload_for_logging
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
@@ -121,7 +121,8 @@ class VolunteersRepository:
         response = self._table.query(
             IndexName="region-status-index",
             KeyConditionExpression=(
-                Key("service_region").eq(service_region) & Key("is_available").eq(1)
+                Key("service_region").eq(service_region)
+                & Key("status").eq(VolunteerStatus.AVAILABLE.value)
             ),
         )
         items = response.get("Items", [])
@@ -144,24 +145,36 @@ class VolunteersRepository:
             VolunteerUnavailableError: If volunteer is already in target state.
             ClientError: If DynamoDB update fails unexpectedly.
         """
-        expected_current_state = not is_available
+        new_status = (
+            VolunteerStatus.AVAILABLE.value
+            if is_available
+            else VolunteerStatus.UNAVAILABLE.value
+        )
+        expected_current_status = (
+            VolunteerStatus.UNAVAILABLE.value
+            if is_available
+            else VolunteerStatus.AVAILABLE.value
+        )
         try:
             self._table.update_item(
                 Key={"volunteer_id": volunteer_id},
-                UpdateExpression="SET is_available = :new_state",
+                UpdateExpression="SET #st = :new_state",
                 ConditionExpression=(
                     "attribute_exists(volunteer_id) AND "
-                    "is_available = :expected_state"
+                    "#st = :expected_state"
                 ),
+                ExpressionAttributeNames={
+                    "#st": "status",
+                },
                 ExpressionAttributeValues={
-                    ":new_state": is_available,
-                    ":expected_state": expected_current_state,
+                    ":new_state": new_status,
+                    ":expected_state": expected_current_status,
                 },
             )
             LOGGER.info(
                 "Volunteer %s availability transitioned to %s",
                 volunteer_id,
-                is_available,
+                new_status,
             )
             return True
         except ClientError as exc:
