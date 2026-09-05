@@ -11,6 +11,7 @@ from botocore.exceptions import ClientError
 
 from audit_repo import AuditRepository
 from donations_repo import DonationClaimConflictError, DonationsRepository
+from idempotency import build_idempotency_key
 from models import (
     AuditEvent,
     Coordinates,
@@ -18,6 +19,7 @@ from models import (
     FoodCategory,
     Recipient,
     Volunteer,
+    VolunteerStatus,
 )
 from recipients_repo import InsufficientCapacityError, RecipientsRepository
 from volunteers_repo import VolunteersRepository, VolunteerUnavailableError
@@ -106,14 +108,14 @@ class MockDynamoDBTable:
                     )
 
             # Evaluate conditional checks for volunteer availability
-            vol_cond = "is_available = :expected_state"
+            vol_cond = "#st = :expected_state"
             if ConditionExpression and vol_cond in ConditionExpression:
                 expected = (
                     ExpressionAttributeValues.get(":expected_state")
                     if ExpressionAttributeValues
                     else None
                 )
-                if item.get("is_available") != expected:
+                if item.get("status") != expected:
                     raise ClientError(
                         {"Error": {"Code": "ConditionalCheckFailedException"}},
                         "UpdateItem",
@@ -128,7 +130,7 @@ class MockDynamoDBTable:
                 if ":qty" in ExpressionAttributeValues:
                     item["capacity_kg_remaining"] -= ExpressionAttributeValues[":qty"]
                 if ":new_state" in ExpressionAttributeValues:
-                    item["is_available"] = ExpressionAttributeValues[":new_state"]
+                    item["status"] = ExpressionAttributeValues[":new_state"]
 
             return {"Attributes": item.copy()}
 
@@ -290,7 +292,7 @@ def test_volunteer_availability_conditional_transition(
         phone="+12125550177",
         address="500 Park Ave",
         coordinates=Coordinates(latitude=40.74, longitude=-74.03),
-        is_available=True,
+        status=VolunteerStatus.AVAILABLE,
         max_capacity_kg=80.0,
         vehicle_type="van",
         service_region="metro-core",
@@ -315,12 +317,14 @@ def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
     (idempotency_key) guarantees table-wide deduplication without duplicate records.
     """
     repo = AuditRepository(dynamodb_resource=mock_dynamodb)
+    idemp_key = build_idempotency_key("don-audit-test", "MATCH_FOUND", 1)
+
     event_initial = AuditEvent(
         event_id="evt-001",
         donation_id="don-audit-test",
         action="MATCH_FOUND",
         actor="strands_orchestrator",
-        idempotency_key="idemp-key-001",
+        idempotency_key=idemp_key,
         details={"score": 0.95},
     )
 
@@ -336,7 +340,7 @@ def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
         donation_id="don-audit-test",
         action="MATCH_FOUND",
         actor="strands_orchestrator",
-        idempotency_key="idemp-key-001",
+        idempotency_key=idemp_key,
         details={"score": 0.95},
     )
     assert repo.record_audit_event(event_retry_diff_id) is False
