@@ -65,6 +65,10 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
