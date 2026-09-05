@@ -98,22 +98,31 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
 
-  # 4. Matches and Audit Log Table
+  # 4. Matches and Audit Log Table (PK = idempotency_key for true table-wide idempotency)
   MatchesAuditTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub "frca-matches-audit-${EnvironmentName}"
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
+        - AttributeName: idempotency_key
+          AttributeType: S
         - AttributeName: donation_id
           AttributeType: S
-        - AttributeName: event_id
+        - AttributeName: timestamp
           AttributeType: S
       KeySchema:
-        - AttributeName: donation_id
+        - AttributeName: idempotency_key
           KeyType: HASH
-        - AttributeName: event_id
-          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: donation-audit-index
+          KeySchema:
+            - AttributeName: donation_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       SSESpecification:
         SSEEnabled: true
       PointInTimeRecoverySpecification:
