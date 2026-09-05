@@ -91,7 +91,7 @@ If CloudFormation is not permitted in your environment, create each table manual
 - **Global Secondary Index (GSI)**:
   - **Index name**: `region-status-index`
   - **Partition key**: `service_region` (String)
-  - **Sort key**: `is_active` (Number: `1` for active, `0` for inactive)
+  - **Sort key**: `status` (String: `"ACTIVE"` for active, `"INACTIVE"` for inactive)
   - **Attribute projection**: All attributes
 
 ### Table 3: Volunteers
@@ -101,7 +101,7 @@ If CloudFormation is not permitted in your environment, create each table manual
 - **Global Secondary Index (GSI)**:
   - **Index name**: `region-status-index`
   - **Partition key**: `service_region` (String)
-  - **Sort key**: `is_available` (Number: `1` for available, `0` for unavailable)
+  - **Sort key**: `status` (String: `"AVAILABLE"` for available, `"UNAVAILABLE"` for unavailable)
   - **Attribute projection**: All attributes
 
 ### Table 4: Matches & Audit Log
@@ -128,15 +128,28 @@ Every index in the data layer maps 1:1 to an operational access pattern:
 
 2. **Recipients Table**:
    - `GetRecipient`: Strongly consistent read by `recipient_id` (PK). Used for real-time capacity and dietary checks.
-   - `QueryActiveRecipients`: Query GSI `region-status-index` (`service_region = :region AND is_active = 1`). Used by the matching algorithm to fetch all active candidates in the operational zone.
+   - `QueryActiveRecipients`: Query GSI `region-status-index` (`service_region = :region AND status = 'ACTIVE'`). Used by the matching algorithm to fetch all active candidates in the operational zone.
 
 3. **Volunteers Table**:
    - `GetVolunteer`: Strongly consistent read by `volunteer_id` (PK). Used for atomic volunteer availability verification.
-   - `QueryAvailableVolunteers`: Query GSI `region-status-index` (`service_region = :region AND is_available = 1`). Used during assignment to discover unassigned drivers in the operational zone.
+   - `QueryAvailableVolunteers`: Query GSI `region-status-index` (`service_region = :region AND status = 'AVAILABLE'`). Used during assignment to discover unassigned drivers in the operational zone.
 
 4. **Matches & Audit Log Table**:
    - `RecordAuditEvent`: Conditional PutItem on `attribute_not_exists(idempotency_key)` on PK `idempotency_key`. Guarantees table-wide deduplication against replayed requests or Lambda retries.
    - `QueryDonationAuditTrail`: Query GSI `donation-audit-index` (`donation_id = :id` ordered by `timestamp` ASC). Used by coordinators to inspect the immutable chronological lifecycle.
+
+---
+
+## Deterministic Idempotency Key Strategy
+
+To eliminate accidental collisions and prevent false-positive deduplication across different donations or operational steps, all idempotency keys are deterministically generated via `build_idempotency_key(donation_id, action, attempt_number)`:
+
+```text
+{donation_id}:{action}:{attempt_number}
+```
+- **`donation_id`**: Scopes the operation strictly to the target donation.
+- **`action`**: Scopes the key to the specific state mutation (e.g. `ASSIGN_VOLUNTEER`, `MATCH_RECIPIENT`).
+- **`attempt_number`**: Incremented when a fresh attempt is explicitly desired, ensuring retries of the same attempt deduplicate while deliberate re-runs succeed.
 
 ---
 
