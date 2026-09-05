@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 
 from config import AppConfig, load_app_configuration
 from dynamodb_retry import with_dynamodb_retry
-from models import Recipient
+from models import Recipient, RecipientStatus
 from redaction import sanitize_payload_for_logging
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
@@ -123,7 +123,8 @@ class RecipientsRepository:
         response = self._table.query(
             IndexName="region-status-index",
             KeyConditionExpression=(
-                Key("service_region").eq(service_region) & Key("is_active").eq(1)
+                Key("service_region").eq(service_region)
+                & Key("status").eq(RecipientStatus.ACTIVE.value)
             ),
         )
         items = response.get("Items", [])
