@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel>=0.40.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "food-rescue-coordination-agent"
+version = "0.1.0"
+description = "Autonomous coordination agent for surplus food routing and volunteer assignment"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Food Rescue Coordination Agent Contributors" }
+]
+dependencies = [
+    "boto3==1.36.21",
+    "botocore==1.36.21",
+    "pydantic==2.10.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "boto3-stubs[dynamodb,location,sns]==1.36.21",
+    "mypy==1.15.0",
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0",
+    "ruff==0.9.7",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "ARG",
+    "B",
+    "C4",
+    "E",
+    "ERA",
+    "F",
+    "I",
+    "PTH",
+    "RET",
+    "SIM",
+    "TCH",
+    "UP",
+    "W",
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent", "config", "tools"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+show_error_codes = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers"
