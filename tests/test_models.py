@@ -8,9 +8,18 @@ from pydantic import ValidationError
 from models import (
     Coordinates,
     Donation,
+    DonationClassification,
+    EscalationReason,
+    EscalationTicket,
     FoodCategory,
+    MatchCandidate,
+    MatchResult,
+    NotificationMessage,
+    NotificationRecipientType,
     Recipient,
+    UrgencyLevel,
     Volunteer,
+    VolunteerAssignment,
 )
 from redaction import (
     mask_phone_number,
@@ -161,3 +170,60 @@ def test_pii_redaction_utilities() -> None:
     assert sanitized["donor_address"].startswith("*** ")
     assert sanitized["metadata"]["contact_phone"] == "***-***-0188"
     assert sanitized["metadata"]["quantity_kg"] == 25.5
+
+
+def test_coordination_models() -> None:
+    """Verify instantiation and constraints of tool layer coordination models."""
+    classification = DonationClassification(
+        food_category=FoodCategory.PRODUCE,
+        urgency_level=UrgencyLevel.CRITICAL,
+        shelf_life_remaining_hours=1.5,
+        is_safety_threshold_breached=False,
+    )
+    assert classification.urgency_level == UrgencyLevel.CRITICAL
+    assert classification.food_category == FoodCategory.PRODUCE
+
+    candidate = MatchCandidate(
+        recipient_id="rec-001",
+        recipient_name="Food Bank East",
+        score=0.88,
+        distance_km=4.2,
+        capacity_match_kg=150.0,
+        dietary_fit=True,
+        reason="Close proximity with ample capacity",
+    )
+    assert candidate.score == 0.88
+
+    match_result = MatchResult(
+        donation_id="don-100",
+        ranked_candidates=[candidate],
+        best_match=candidate,
+    )
+    assert match_result.best_match is not None
+    assert match_result.best_match.recipient_id == "rec-001"
+
+    assignment = VolunteerAssignment(
+        assignment_id="asgn-001",
+        donation_id="don-100",
+        volunteer_id="vol-001",
+        recipient_id="rec-001",
+    )
+    assert assignment.status == "assigned"
+
+    notification = NotificationMessage(
+        recipient_type=NotificationRecipientType.VOLUNTEER,
+        destination="+12125550177",
+        template_id="VOLUNTEER_ASSIGNMENT_V1",
+        rendered_body="Pickup at 123 Main St",
+        correlation_id="corr-123",
+    )
+    assert notification.recipient_type == NotificationRecipientType.VOLUNTEER
+
+    ticket = EscalationTicket(
+        ticket_id="tkt-001",
+        donation_id="don-100",
+        reason=EscalationReason.NO_MATCH_WITHIN_WINDOW,
+        details={"attempted_candidates": 0},
+    )
+    assert ticket.reason == EscalationReason.NO_MATCH_WITHIN_WINDOW
+
