@@ -194,3 +194,102 @@ class AuditEvent(BaseModel):
     actor: str = Field(..., min_length=1, max_length=128)
     idempotency_key: str = Field(..., min_length=1, max_length=256)
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class UrgencyLevel(str, Enum):
+    """Perishability and delivery urgency tiers."""
+
+    STANDARD = "standard"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class DonationClassification(BaseModel):
+    """Calculated classification and urgency assessment for a donation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    food_category: FoodCategory
+    urgency_level: UrgencyLevel
+    shelf_life_remaining_hours: float = Field(..., ge=0.0)
+    is_safety_threshold_breached: bool
+
+
+class MatchCandidate(BaseModel):
+    """Ranked recipient candidate evaluated by the matching algorithm."""
+
+    model_config = ConfigDict(frozen=True)
+
+    recipient_id: str = Field(..., min_length=1, max_length=128)
+    recipient_name: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
+    score: float = Field(..., ge=0.0, le=1.0)
+    distance_km: float = Field(..., ge=0.0)
+    capacity_match_kg: float = Field(..., ge=0.0)
+    dietary_fit: bool
+    reason: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
+
+
+class MatchResult(BaseModel):
+    """Complete ranked output of the matching algorithm for a donation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    donation_id: str = Field(..., min_length=1, max_length=128)
+    ranked_candidates: list[MatchCandidate] = Field(default_factory=list)
+    best_match: MatchCandidate | None = None
+    rejection_reason: str | None = None
+
+
+class VolunteerAssignment(BaseModel):
+    """Transit volunteer assignment record for moving surplus food."""
+
+    model_config = ConfigDict(frozen=True)
+
+    assignment_id: str = Field(..., min_length=1, max_length=128)
+    donation_id: str = Field(..., min_length=1, max_length=128)
+    volunteer_id: str = Field(..., min_length=1, max_length=128)
+    recipient_id: str = Field(..., min_length=1, max_length=128)
+    status: str = Field(default="assigned", max_length=32)
+    assigned_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+
+class NotificationRecipientType(str, Enum):
+    """Target entity category for transactional notifications."""
+
+    DONOR = "donor"
+    RECIPIENT = "recipient"
+    VOLUNTEER = "volunteer"
+    COORDINATOR = "coordinator"
+
+
+class NotificationMessage(BaseModel):
+    """Sanitized, template-rendered notification payload."""
+
+    model_config = ConfigDict(frozen=True)
+
+    recipient_type: NotificationRecipientType
+    destination: str = Field(..., min_length=1, max_length=256)
+    template_id: str = Field(..., min_length=1, max_length=64)
+    rendered_body: str = Field(..., min_length=1, max_length=1000)
+    correlation_id: str = Field(..., min_length=1, max_length=128)
+
+
+class EscalationTicket(BaseModel):
+    """Explicit human-coordinator escalation request record."""
+
+    model_config = ConfigDict(frozen=True)
+
+    ticket_id: str = Field(..., min_length=1, max_length=128)
+    donation_id: str = Field(..., min_length=1, max_length=128)
+    reason: EscalationReason
+    details: dict[str, Any] = Field(default_factory=dict)
+    escalated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+
+class InfrastructureConsistencyError(RuntimeError):
+    """Raised when atomic compensation fails, requiring ops investigation."""
+
