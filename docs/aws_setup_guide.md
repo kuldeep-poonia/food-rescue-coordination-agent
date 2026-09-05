@@ -106,15 +106,52 @@ If CloudFormation is not permitted in your environment, create each table manual
 
 ### Table 4: Matches & Audit Log
 - **Table name**: `frca-matches-audit-dev`
-- **Partition key**: `donation_id` (String)
-- **Sort key**: `event_id` (String)
-- **Capacity**: On-demand
+- **Partition key**: `idempotency_key` (String)
+- **Table class / Capacity**: On-demand (`PAY_PER_REQUEST`)
+- **Encryption**: AWS-managed KMS (Default)
+- **Point-in-Time Recovery**: Enabled
+- **Global Secondary Index (GSI)**:
+  - **Index name**: `donation-audit-index`
+  - **Partition key**: `donation_id` (String)
+  - **Sort key**: `timestamp` (String)
+  - **Attribute projection**: All attributes
 
 ---
 
-## Local Development Configuration
+## Exact Access Patterns & Index Design
 
-When running against the deployed AWS tables, configure the following environment variables:
+Every index in the data layer maps 1:1 to an operational access pattern:
+
+1. **Donations Table**:
+   - `GetDonation`: Strongly consistent read by `donation_id` (PK). Used for atomic claim state checks.
+   - `QueryUnmatchedDonations`: Query GSI `status-ready_by-index` (`status = 'reported'` ordered by `ready_by` ASC). Used by background evaluation rules to discover donations approaching deadline.
+
+2. **Recipients Table**:
+   - `GetRecipient`: Strongly consistent read by `recipient_id` (PK). Used for real-time capacity and dietary checks.
+   - `QueryActiveRecipients`: Query GSI `region-status-index` (`service_region = :region AND is_active = 1`). Used by the matching algorithm to fetch all active candidates in the operational zone.
+
+3. **Volunteers Table**:
+   - `GetVolunteer`: Strongly consistent read by `volunteer_id` (PK). Used for atomic volunteer availability verification.
+   - `QueryAvailableVolunteers`: Query GSI `region-status-index` (`service_region = :region AND is_available = 1`). Used during assignment to discover unassigned drivers in the operational zone.
+
+4. **Matches & Audit Log Table**:
+   - `RecordAuditEvent`: Conditional PutItem on `attribute_not_exists(idempotency_key)` on PK `idempotency_key`. Guarantees table-wide deduplication against replayed requests or Lambda retries.
+   - `QueryDonationAuditTrail`: Query GSI `donation-audit-index` (`donation_id = :id` ordered by `timestamp` ASC). Used by coordinators to inspect the immutable chronological lifecycle.
+
+---
+
+## Read Consistency Policy
+
+To prevent concurrency flakiness and race conditions:
+- **Matching-Critical Reads**: All operational queries (`get_donation`, `get_recipient`, `get_volunteer`) default strictly to **Strongly Consistent Reads** (`ConsistentRead=True`). This guarantees that concurrent claims or rapid capacity deductions never read stale replica state.
+- **Reporting & Telemetry Reads**: Non-critical reads (e.g. coordinator overview dashboard statistics) can explicitly pass `consistent_read=False` to minimize read capacity unit consumption.
+
+---
+
+## Environment Configuration & Table Name Resolution
+
+Per project security rules, table names, topic ARNs, and AWS regions are **never hardcoded as string literals** in repositories or business logic. All repository classes (`DonationsRepository`, `RecipientsRepository`, etc.) initialize via `config.py` (`load_app_configuration()`):
+
 ```bash
 export AWS_REGION=us-east-1
 export DONATIONS_TABLE_NAME=frca-donations-dev
