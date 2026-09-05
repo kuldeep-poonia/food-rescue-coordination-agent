@@ -1,0 +1,193 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Food Rescue Coordination Agent Action Group API",
+    "version": "1.0.0",
+    "description": "Autonomous surplus food donation coordination, volunteer dispatch, and metrics reconciliation."
+  },
+  "paths": {
+    "/coordinate-donation": {
+      "post": {
+        "summary": "Coordinate food rescue donation",
+        "description": "Evaluates safety thresholds, matches with active recipient shelters, and assigns volunteer drivers.",
+        "operationId": "coordinateDonation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "donation_id"
+                ],
+                "properties": {
+                  "donation_id": {
+                    "type": "string",
+                    "description": "Unique ID of the donation to coordinate."
+                  },
+                  "service_region": {
+                    "type": "string",
+                    "description": "Operational region such as metro-core."
+                  },
+                  "dry_run": {
+                    "type": "boolean",
+                    "description": "Whether to simulate dispatch without database updates."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Coordination result containing status and assignment details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "description": "Outcome status of coordination (ASSIGNED, ESCALATED, or MATCHED)."
+                    },
+                    "donation_id": {
+                      "type": "string",
+                      "description": "ID of the coordinated donation."
+                    },
+                    "recipient_id": {
+                      "type": "string",
+                      "description": "Matched recipient shelter ID."
+                    },
+                    "volunteer_id": {
+                      "type": "string",
+                      "description": "Assigned volunteer driver ID."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reconcile-session": {
+      "post": {
+        "summary": "Reconcile daily operational metrics",
+        "description": "Reconciles daily session counters against authoritative DynamoDB fulfillment records.",
+        "operationId": "reconcileSession",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "service_region": {
+                    "type": "string",
+                    "description": "Operational region to reconcile."
+                  },
+                  "session_date": {
+                    "type": "string",
+                    "description": "Target date formatted as YYYY-MM-DD."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reconciled session metrics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_date": {
+                      "type": "string",
+                      "description": "Date of the reconciled session."
+                    },
+                    "total_kg_routed": {
+                      "type": "number",
+                      "description": "Total kilograms of food routed."
+                    },
+                    "total_donations_processed": {
+                      "type": "integer",
+                      "description": "Total donations processed."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/query-memory": {
+      "post": {
+        "summary": "Query entity history memory",
+        "description": "Retrieves long-term behavioral patterns and preferences for a donor or recipient.",
+        "operationId": "queryMemory",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "entity_type",
+                  "entity_id"
+                ],
+                "properties": {
+                  "entity_type": {
+                    "type": "string",
+                    "description": "Category of entity such as donor, recipient, or volunteer."
+                  },
+                  "entity_id": {
+                    "type": "string",
+                    "description": "Unique ID of the entity."
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of patterns to return."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Retrieved memory patterns.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "patterns": {
+                      "type": "array",
+                      "description": "List of historical memory records.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "pattern_type": {
+                            "type": "string",
+                            "description": "Type of pattern detected."
+                          },
+                          "entity_id": {
+                            "type": "string",
+                            "description": "Target entity identifier."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
