@@ -68,11 +68,18 @@ class DonationsRepository:
         )
 
     @with_dynamodb_retry
-    def get_donation(self, donation_id: str) -> Donation | None:
+    def get_donation(
+        self, donation_id: str, consistent_read: bool = True
+    ) -> Donation | None:
         """Retrieve a donation record by its unique identifier.
+
+        Policy decision: Matching-critical state verification requires strongly
+        consistent reads (consistent_read=True) to prevent stale state races.
+        Eventual consistency (consistent_read=False) is reserved for reporting.
 
         Args:
             donation_id: The unique donation identifier.
+            consistent_read: Enforce strongly consistent read (default: True).
 
         Returns:
             The parsed Donation model if found, otherwise None.
@@ -82,7 +89,7 @@ class DonationsRepository:
         """
         response = self._table.get_item(
             Key={"donation_id": donation_id},
-            ConsistentRead=True,
+            ConsistentRead=consistent_read,
         )
         item = response.get("Item")
         if not item:
