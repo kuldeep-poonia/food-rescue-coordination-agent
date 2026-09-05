@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AWS Bedrock AgentCore infrastructure, sessions/memory store, DLQ, and execution roles for FRCA"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: "dev"
+    Description: "Deployment environment identifier (e.g. dev, staging, prod)"
+  BedrockModelId:
+    Type: String
+    Default: "anthropic.claude-3-sonnet-20240229-v1:0"
+    Description: "Foundation model ID backing the Bedrock Agent"
+
+Resources:
+  # 1. Ephemeral Sessions and Long-Term Memory DynamoDB Table
+  SessionsMemoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "frca-sessions-memory-${EnvironmentName}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl_epoch
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # 2. Coordinator Dead-Letter Queue for Throttling Fail-Safe
+  CoordinatorDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "frca-coordinator-dlq-${EnvironmentName}"
+      MessageRetentionPeriod: 1209600 # 14 days
+      KmsMasterKeyId: "alias/aws/sqs"
+
+  # 3. IAM Execution Role for Bedrock Agent and Lambda Runtime
+  AgentExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "frca-agent-execution-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:TransactWriteItems
+                Resource:
+                  - !GetAtt SessionsMemoryTable.Arn
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-donations-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-donations-${EnvironmentName}/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-recipients-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-volunteers-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}/index/*"
+        - PolicyName: SQSDeadLetterQueueAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt CoordinatorDLQ.Arn
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+  # 4. AgentCore Runtime Lambda Function
+  AgentCoreRuntimeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "frca-agent-core-runtime-${EnvironmentName}"
+      Handler: agent.runtime.lambda_handler
+      Runtime: python3.10
+      Role: !GetAtt AgentExecutionRole.Arn
+      MemorySize: 512
+      Timeout: 30
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              from agent.runtime import lambda_handler as handler
+              return handler(event, context)
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref EnvironmentName
+          SESSIONS_MEMORY_TABLE_NAME: !Ref SessionsMemoryTable
+          DONATIONS_TABLE_NAME: !Sub "frca-donations-${EnvironmentName}"
+          RECIPIENTS_TABLE_NAME: !Sub "frca-recipients-${EnvironmentName}"
+          VOLUNTEERS_TABLE_NAME: !Sub "frca-volunteers-${EnvironmentName}"
+          MATCHES_AUDIT_TABLE_NAME: !Sub "frca-matches-audit-${EnvironmentName}"
+          COORDINATOR_DLQ_URL: !Ref CoordinatorDLQ
+
+  # 5. Scheduled EventBridge Rule for Periodic Metric Reconciliation (Every 15 min)
+  ReconciliationScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "frca-reconciliation-schedule-${EnvironmentName}"
+      Description: "Trigger periodic 15-minute reconciliation of session metrics"
+      ScheduleExpression: "rate(15 minutes)"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AgentCoreRuntimeFunction.Arn
+          Id: "ReconcileSessionMetricsTarget"
+          Input: '{"detail-type": "RECONCILE_SESSION_METRICS", "source": "aws.events", "detail": {"service_region": "metro-core"}}'
+
+  # 6. Lambda Permission for EventBridge Invocation
+  EventBridgeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgentCoreRuntimeFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ReconciliationScheduleRule.Arn
+
+Outputs:
+  SessionsMemoryTableName:
+    Description: "Name of the DynamoDB table for ephemeral sessions and long-term memory"
+    Value: !Ref SessionsMemoryTable
+    Export:
+      Name: !Sub "${AWS::StackName}-SessionsMemoryTableName"
+
+  CoordinatorDLQUrl:
+    Description: "URL of the SQS Dead-Letter Queue for throttled requests"
+    Value: !Ref CoordinatorDLQ
+    Export:
+      Name: !Sub "${AWS::StackName}-CoordinatorDLQUrl"
+
+  AgentExecutionRoleArn:
+    Description: "ARN of the IAM Role for Bedrock Agent and Lambda execution"
+    Value: !GetAtt AgentExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AgentExecutionRoleArn"
+
+  AgentCoreRuntimeFunctionArn:
+    Description: "ARN of the AgentCore Runtime Lambda function"
+    Value: !GetAtt AgentCoreRuntimeFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AgentCoreRuntimeFunctionArn"
