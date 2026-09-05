@@ -67,15 +67,15 @@ class AuditRepository:
         try:
             self._table.put_item(
                 Item=item,
-                ConditionExpression="attribute_not_exists(event_id)",
+                ConditionExpression="attribute_not_exists(idempotency_key)",
             )
             return True
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
             if code == "ConditionalCheckFailedException":
                 LOGGER.warning(
-                    "Idempotent duplicate ignored: event %s already recorded",
-                    event.event_id,
+                    "Idempotent duplicate ignored: key %s already recorded",
+                    event.idempotency_key,
                 )
                 return False
             raise
@@ -94,6 +94,7 @@ class AuditRepository:
             ClientError: If DynamoDB query fails after retries.
         """
         response = self._table.query(
+            IndexName="donation-audit-index",
             KeyConditionExpression=Key("donation_id").eq(donation_id),
             ScanIndexForward=True,
         )
