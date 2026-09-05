@@ -52,6 +52,10 @@ class AuditRepository:
 
         Returns:
             True if event was persisted, False if duplicate idempotency key detected.
+            CONSUMER CONTRACT: False indicates the event was already successfully
+            persisted in a prior attempt/replay. Callers (tools, Lambda handlers,
+            orchestrator) must treat False as a successful no-op, never retry or
+            escalate.
 
         Raises:
             ClientError: If DynamoDB write fails for an unexpected reason.
