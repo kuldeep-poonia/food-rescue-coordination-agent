@@ -1,0 +1,163 @@
+"""Adversarial and boundary test suite for domain entity models and validation."""
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from pydantic import ValidationError
+
+from models import (
+    Coordinates,
+    Donation,
+    FoodCategory,
+    Recipient,
+    Volunteer,
+)
+from redaction import (
+    mask_phone_number,
+    mask_street_address,
+    sanitize_payload_for_logging,
+)
+
+
+def create_valid_coordinates() -> Coordinates:
+    """Provide standard valid coordinates for model fixtures."""
+    return Coordinates(latitude=40.7128, longitude=-74.0060)
+
+
+def test_donation_rejects_negative_quantity() -> None:
+    """Verify negative and zero quantity_kg inputs are rejected by validation."""
+    future_time = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Donation(
+            donation_id="don-001",
+            donor_id="donor-1",
+            donor_name="Downtown Bakery",
+            donor_phone="+12125550199",
+            donor_address="123 Main St",
+            donor_coordinates=create_valid_coordinates(),
+            food_category=FoodCategory.BAKERY,
+            quantity_kg=-5.0,  # Negative quantity
+            ready_by=future_time,
+            perishability_hours=12.0,
+        )
+    assert "quantity_kg" in str(exc_info.value)
+
+
+def test_donation_rejects_past_expiry() -> None:
+    """Verify ready_by timestamp in the past is rejected."""
+    past_time = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Donation(
+            donation_id="don-002",
+            donor_id="donor-1",
+            donor_name="Downtown Bakery",
+            donor_phone="+12125550199",
+            donor_address="123 Main St",
+            donor_coordinates=create_valid_coordinates(),
+            food_category=FoodCategory.BAKERY,
+            quantity_kg=15.0,
+            ready_by=past_time,  # Past timestamp
+            perishability_hours=12.0,
+        )
+    assert "ready_by timestamp must be in the future" in str(exc_info.value)
+
+
+def test_donation_rejects_malformed_phone() -> None:
+    """Verify malformed phone numbers are rejected by regex validation."""
+    future_time = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    invalid_phones = ["123", "phone-number", "++12345", "0000000"]
+    for bad_phone in invalid_phones:
+        with pytest.raises(ValidationError):
+            Donation(
+                donation_id="don-003",
+                donor_id="donor-1",
+                donor_name="Downtown Bakery",
+                donor_phone=bad_phone,
+                donor_address="123 Main St",
+                donor_coordinates=create_valid_coordinates(),
+                food_category=FoodCategory.BAKERY,
+                quantity_kg=10.0,
+                ready_by=future_time,
+                perishability_hours=6.0,
+            )
+
+
+def test_donation_rejects_oversized_string_input() -> None:
+    """Verify 10,000+ character string attacks are rejected before DB access."""
+    future_time = datetime.now(timezone.utc) + timedelta(hours=2)
+    oversized_payload = "A" * 15000
+
+    with pytest.raises(ValidationError):
+        Donation(
+            donation_id="don-004",
+            donor_id="donor-1",
+            donor_name=oversized_payload,  # 15,000 chars
+            donor_phone="+12125550199",
+            donor_address="123 Main St",
+            donor_coordinates=create_valid_coordinates(),
+            food_category=FoodCategory.BAKERY,
+            quantity_kg=10.0,
+            ready_by=future_time,
+            perishability_hours=6.0,
+        )
+
+
+def test_recipient_rejects_negative_capacity() -> None:
+    """Verify recipient capacity cannot be set to a negative value."""
+    with pytest.raises(ValidationError):
+        Recipient(
+            recipient_id="rec-001",
+            organization_name="Community Shelter",
+            contact_name="Jane Doe",
+            contact_phone="+12125550188",
+            address="456 Elm St",
+            coordinates=create_valid_coordinates(),
+            capacity_kg_remaining=-10.0,  # Invalid negative capacity
+            service_region="metro-core",
+        )
+
+
+def test_volunteer_rejects_invalid_coordinates() -> None:
+    """Verify latitude and longitude out of geographic bounds are rejected."""
+    with pytest.raises(ValidationError):
+        Volunteer(
+            volunteer_id="vol-001",
+            volunteer_name="Alex Smith",
+            phone="+12125550177",
+            address="789 Pine St",
+            coordinates=Coordinates(latitude=95.0, longitude=-74.0),  # Latitude > 90
+            max_capacity_kg=50.0,
+            vehicle_type="car",
+            service_region="metro-core",
+        )
+
+
+def test_pii_redaction_utilities() -> None:
+    """Verify phone, address, and payload masking correctly obscure sensitive data."""
+    raw_phone = "+1 (212) 555-0199"
+    masked_phone = mask_phone_number(raw_phone)
+    assert masked_phone == "***-***-0199"
+
+    raw_address = "456 West 34th Street, Suite 500, New York, NY"
+    masked_address = mask_street_address(raw_address)
+    assert masked_address.startswith("*** ")
+    assert "New York" in masked_address
+
+    payload = {
+        "donor_phone": "+12125550199",
+        "donor_name": "Alice Wonderland",
+        "donor_address": "123 Main St, Springfield",
+        "metadata": {
+            "contact_phone": "+12125550188",
+            "quantity_kg": 25.5,
+        },
+    }
+    sanitized = sanitize_payload_for_logging(payload)
+    assert sanitized["donor_phone"] == "***-***-0199"
+    assert sanitized["donor_name"] == "A***"
+    assert sanitized["donor_address"].startswith("*** ")
+    assert sanitized["metadata"]["contact_phone"] == "***-***-0188"
+    assert sanitized["metadata"]["quantity_kg"] == 25.5
