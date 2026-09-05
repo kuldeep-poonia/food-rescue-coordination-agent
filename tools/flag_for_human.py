@@ -8,7 +8,6 @@ from donations_repo import DonationsRepository
 from idempotency import build_idempotency_key
 from models import (
     AuditEvent,
-    DonationStatus,
     EscalationReason,
     EscalationTicket,
     NotificationRecipientType,
@@ -83,11 +82,11 @@ def flag_for_human(
 
     # 1. Update donation status to escalated if donation exists
     donation = d_repo.get_donation(donation_id, consistent_read=True)
-    if donation is not None and donation.status != DonationStatus.ESCALATED:
-        # Note: If donation exists, we preserve trace
+    if donation is not None:
         LOGGER.info(
             "Marking donation %s as escalated in repository", donation_id
         )
+        d_repo.escalate_donation(donation_id, reason)
 
     # 2. Record immutable audit event
     audit_key = build_idempotency_key(donation_id, f"escalate_{reason.value}")
@@ -107,20 +106,49 @@ def flag_for_human(
     )
     a_repo.record_audit_event(audit_event)
 
-    # 3. Publish alert to coordinator SNS topic
-    send_notification(
-        recipient_type=NotificationRecipientType.COORDINATOR,
-        destination="coordinator-alert",
-        template_id="COORDINATOR_ESCALATION_V1",
-        parameters={
-            "donation_id": donation_id,
-            "escalation_reason": reason.value,
-            "summary": summary,
-        },
-        correlation_id=correlation_id,
-        sns_client=sns_client,
-        topic_arn=escalation_topic_arn,
+    # 3. Publish alert to coordinator SNS topic with idempotency check
+    coord_key = f"{donation_id}:notify_coordinator_escalation"
+    trail = a_repo.query_audit_trail_by_donation(donation_id)
+    notif_already_sent = any(
+        evt.action == "NOTIFICATION_DISPATCHED" and evt.idempotency_key == coord_key
+        for evt in trail
     )
+    if not notif_already_sent:
+        send_notification(
+            recipient_type=NotificationRecipientType.COORDINATOR,
+            destination="coordinator-alert",
+            template_id="COORDINATOR_ESCALATION_V1",
+            parameters={
+                "donation_id": donation_id,
+                "escalation_reason": reason.value,
+                "summary": summary,
+            },
+            correlation_id=correlation_id,
+            sns_client=sns_client,
+            topic_arn=escalation_topic_arn,
+        )
+        coord_audit = AuditEvent(
+            event_id=f"evt-{uuid.uuid4().hex[:12]}",
+            donation_id=donation_id,
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key=coord_key,
+            details={
+                "recipient_type": NotificationRecipientType.COORDINATOR.value,
+                "destination": "coordinator-alert",
+                "ticket_id": ticket_id,
+                "reason": reason.value,
+                "correlation_id": correlation_id,
+            },
+        )
+        a_repo.record_audit_event(coord_audit)
+    else:
+        LOGGER.info(
+            "Coordinator escalation alert already sent for donation %s (key %s); "
+            "skipping duplicate",
+            donation_id,
+            coord_key,
+        )
 
     return EscalationTicket(
         ticket_id=ticket_id,
