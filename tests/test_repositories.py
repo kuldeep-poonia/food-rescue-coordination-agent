@@ -317,7 +317,7 @@ def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
     (idempotency_key) guarantees table-wide deduplication without duplicate records.
     """
     repo = AuditRepository(dynamodb_resource=mock_dynamodb)
-    idemp_key = build_idempotency_key("don-audit-test", "MATCH_FOUND", 1)
+    idemp_key = build_idempotency_key("don-audit-test", "MATCH_FOUND")
 
     event_initial = AuditEvent(
         event_id="evt-001",
@@ -331,10 +331,10 @@ def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
     # Initial write succeeds
     assert repo.record_audit_event(event_initial) is True
 
-    # Replay with exact same event model returns False cleanly
+    # Retry 1: Network timeout / re-invocation with exact same event model
     assert repo.record_audit_event(event_initial) is False
 
-    # Retry that generated a different event_id but SAME idempotency_key
+    # Retry 2: Process restart generates new event_id but produces SAME idempotency_key
     event_retry_diff_id = AuditEvent(
         event_id="evt-999-new-id",
         donation_id="don-audit-test",
@@ -344,6 +344,17 @@ def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
         details={"score": 0.95},
     )
     assert repo.record_audit_event(event_retry_diff_id) is False
+
+    # Retry 3: Third retry attempt
+    event_retry_3 = AuditEvent(
+        event_id="evt-888-third-id",
+        donation_id="don-audit-test",
+        action="MATCH_FOUND",
+        actor="strands_orchestrator",
+        idempotency_key=idemp_key,
+        details={"score": 0.95},
+    )
+    assert repo.record_audit_event(event_retry_3) is False
 
     # Trail verification confirms exactly one audit event is persisted
     trail = repo.query_audit_trail_by_donation("don-audit-test")
