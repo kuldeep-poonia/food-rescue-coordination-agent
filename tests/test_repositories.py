@@ -35,7 +35,12 @@ class MockDynamoDBTable:
         self, Item: dict[str, Any], ConditionExpression: str | None = None
     ) -> None:
         with self._lock:
-            pk_val = next(iter(Item.values()))
+            pk_name = (
+                "idempotency_key"
+                if "idempotency_key" in Item
+                else next(iter(Item.keys()))
+            )
+            pk_val = str(Item[pk_name])
             if (
                 ConditionExpression
                 and "attribute_not_exists" in ConditionExpression
@@ -45,7 +50,7 @@ class MockDynamoDBTable:
                     {"Error": {"Code": "ConditionalCheckFailedException"}},
                     "PutItem",
                 )
-            self._items[str(pk_val)] = Item.copy()
+            self._items[pk_val] = Item.copy()
 
     def get_item(
         self, Key: dict[str, Any], ConsistentRead: bool = True
@@ -304,9 +309,13 @@ def test_volunteer_availability_conditional_transition(
 
 
 def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
-    """Verify duplicate audit events with identical IDs are handled idempotently."""
+    """Verify duplicate audit events with same idempotency_key are handled idempotently.
+
+    Proves that even when a retry generates a new event_id, the partition key
+    (idempotency_key) guarantees table-wide deduplication without duplicate records.
+    """
     repo = AuditRepository(dynamodb_resource=mock_dynamodb)
-    event = AuditEvent(
+    event_initial = AuditEvent(
         event_id="evt-001",
         donation_id="don-audit-test",
         action="MATCH_FOUND",
@@ -316,7 +325,23 @@ def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
     )
 
     # Initial write succeeds
-    assert repo.record_audit_event(event) is True
+    assert repo.record_audit_event(event_initial) is True
 
-    # Duplicate write returns False cleanly without crashing
-    assert repo.record_audit_event(event) is False
+    # Replay with exact same event model returns False cleanly
+    assert repo.record_audit_event(event_initial) is False
+
+    # Retry that generated a different event_id but SAME idempotency_key
+    event_retry_diff_id = AuditEvent(
+        event_id="evt-999-new-id",
+        donation_id="don-audit-test",
+        action="MATCH_FOUND",
+        actor="strands_orchestrator",
+        idempotency_key="idemp-key-001",
+        details={"score": 0.95},
+    )
+    assert repo.record_audit_event(event_retry_diff_id) is False
+
+    # Trail verification confirms exactly one audit event is persisted
+    trail = repo.query_audit_trail_by_donation("don-audit-test")
+    assert len(trail) == 1
+    assert trail[0].event_id == "evt-001"
