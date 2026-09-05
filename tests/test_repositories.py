@@ -10,13 +10,19 @@ import pytest
 from botocore.exceptions import ClientError
 
 from audit_repo import AuditRepository
-from donations_repo import DonationClaimConflictError, DonationsRepository
+from donations_repo import (
+    DonationClaimConflictError,
+    DonationsRepository,
+    DonationStateConflictError,
+)
 from idempotency import build_idempotency_key
 from models import (
     AuditEvent,
     Coordinates,
     Donation,
+    DonationStatus,
     FoodCategory,
+    InfrastructureConsistencyError,
     Recipient,
     Volunteer,
     VolunteerStatus,
@@ -422,3 +428,131 @@ def test_audit_event_idempotency(mock_dynamodb: MockDynamoDBResource) -> None:
     trail = repo.query_audit_trail_by_donation("don-audit-test")
     assert len(trail) == 1
     assert trail[0].event_id == "evt-001"
+
+
+def test_donation_unclaim_conditional_rollback(
+    mock_dynamodb: MockDynamoDBResource,
+) -> None:
+    """Verify unclaim rolls back status to REPORTED and clears matched recipient."""
+    repo = DonationsRepository(dynamodb_resource=mock_dynamodb)
+    donation = Donation(
+        donation_id="don-unclaim-test",
+        donor_id="donor-100",
+        donor_name="Central Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Broadway",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=50.0,
+        ready_by=datetime.now(timezone.utc) + timedelta(hours=3),
+        perishability_hours=24.0,
+    )
+    repo.create_donation(donation)
+
+    # 1. Claim donation
+    assert repo.claim_donation(donation.donation_id, "rec-target-1") is True
+    claimed = repo.get_donation(donation.donation_id)
+    assert claimed is not None
+    assert claimed.status == DonationStatus.MATCHED
+    assert claimed.matched_recipient_id == "rec-target-1"
+
+    # 2. Attempt unclaim with wrong recipient must raise DonationStateConflictError
+    with pytest.raises(DonationStateConflictError):
+        repo.unclaim_donation(donation.donation_id, "rec-wrong-recipient")
+
+    # 3. Valid unclaim rolls back to REPORTED
+    assert repo.unclaim_donation(donation.donation_id, "rec-target-1") is True
+    reverted = repo.get_donation(donation.donation_id)
+    assert reverted is not None
+    assert reverted.status == DonationStatus.REPORTED
+    assert reverted.matched_recipient_id is None
+
+
+def test_claim_and_deduct_cancellation_reasons_priority() -> None:
+    """Verify CancellationReasons index parsing and priority resolution."""
+    mock_client = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.meta.client = mock_client
+    repo = DonationsRepository(dynamodb_resource=mock_resource)
+
+    # Case 1: Reason 0 (donation) failed, Reason 1 None -> DonationClaimConflictError
+    mock_client.transact_write_items.side_effect = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException"},
+            "CancellationReasons": [
+                {"Code": "ConditionalCheckFailed"},
+                {"Code": "None"},
+            ],
+        },
+        "TransactWriteItems",
+    )
+    with pytest.raises(DonationClaimConflictError):
+        repo.claim_and_deduct_recipient("don-1", "rec-1", 25.0)
+
+    # Case 2: Reason 0 None, Reason 1 (recipient) failed -> InsufficientCapacityError
+    mock_client.transact_write_items.side_effect = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException"},
+            "CancellationReasons": [
+                {"Code": "None"},
+                {"Code": "ConditionalCheckFailed"},
+            ],
+        },
+        "TransactWriteItems",
+    )
+    with pytest.raises(InsufficientCapacityError):
+        repo.claim_and_deduct_recipient("don-1", "rec-1", 25.0)
+
+    # Case 3: Both failed -> Priority rule raises DonationClaimConflictError
+    mock_client.transact_write_items.side_effect = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException"},
+            "CancellationReasons": [
+                {"Code": "ConditionalCheckFailed"},
+                {"Code": "ConditionalCheckFailed"},
+            ],
+        },
+        "TransactWriteItems",
+    )
+    with pytest.raises(DonationClaimConflictError):
+        repo.claim_and_deduct_recipient("don-1", "rec-1", 25.0)
+
+    # Case 4: Success path returns True and uses ClientRequestToken
+    mock_client.transact_write_items.side_effect = None
+    mock_client.transact_write_items.return_value = {}
+    assert repo.claim_and_deduct_recipient("don-1", "rec-1", 25.0) is True
+    _, kwargs = mock_client.transact_write_items.call_args
+    assert "ClientRequestToken" in kwargs
+    assert kwargs["ClientRequestToken"] == build_idempotency_key(
+        "don-1", "claim_and_deduct"
+    )
+
+
+def test_unclaim_and_restore_transaction_error_handling() -> None:
+    """Verify unclaim_and_restore_recipient error handling and consistency."""
+    mock_client = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.meta.client = mock_client
+    repo = DonationsRepository(dynamodb_resource=mock_resource)
+
+    # Reason 0 ConditionalCheckFailed -> DonationStateConflictError
+    mock_client.transact_write_items.side_effect = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException"},
+            "CancellationReasons": [
+                {"Code": "ConditionalCheckFailed"},
+                {"Code": "None"},
+            ],
+        },
+        "TransactWriteItems",
+    )
+    with pytest.raises(DonationStateConflictError):
+        repo.unclaim_and_restore_recipient("don-1", "rec-1", 25.0)
+
+    # Unexpected ClientError -> InfrastructureConsistencyError
+    mock_client.transact_write_items.side_effect = ClientError(
+        {"Error": {"Code": "InternalServerError"}},
+        "TransactWriteItems",
+    )
+    with pytest.raises(InfrastructureConsistencyError):
+        repo.unclaim_and_restore_recipient("don-1", "rec-1", 25.0)

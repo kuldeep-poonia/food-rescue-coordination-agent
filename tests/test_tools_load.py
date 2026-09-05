@@ -74,15 +74,21 @@ def test_concurrent_load_two_hundred_donations() -> None:
 
     latencies: list[float] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-        futures = [
-            executor.submit(process_donation_pipeline, don) for don in donations
-        ]
-        for fut in concurrent.futures.as_completed(futures):
-            don_id, latency_ms, valid = fut.result()
-            assert valid is True
-            assert don_id.startswith("don-load-")
-            latencies.append(latency_ms)
+    import logging
+
+    logging.disable(logging.CRITICAL)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+            futures = [
+                executor.submit(process_donation_pipeline, don) for don in donations
+            ]
+            for fut in concurrent.futures.as_completed(futures):
+                don_id, latency_ms, valid = fut.result()
+                assert valid is True
+                assert don_id.startswith("don-load-")
+                latencies.append(latency_ms)
+    finally:
+        logging.disable(logging.NOTSET)
 
     # 3. Assert zero dropped requests
     assert len(latencies) == 200
