@@ -293,3 +293,41 @@ class EscalationTicket(BaseModel):
 class InfrastructureConsistencyError(RuntimeError):
     """Raised when atomic compensation fails, requiring ops investigation."""
 
+
+class DonationStateConflictError(Exception):
+    """Raised when an operation encounters an unexpected donation status or state."""
+
+
+class GuardrailViolationError(RuntimeError):
+    """Raised when an action violates an operational safety guardrail."""
+
+
+class PipelineStep(str, Enum):
+    """Execution stages within the autonomous donation coordination pipeline."""
+
+    INTAKE = "intake"
+    CLASSIFY = "classify"
+    FETCH_CAPACITY = "fetch_capacity"
+    MATCH = "match"
+    CLAIM_RECIPIENT = "claim_recipient"
+    ASSIGN_VOLUNTEER = "assign_volunteer"
+    DISPATCH_NOTIFICATIONS = "dispatch_notifications"
+    COMPLETE = "complete"
+    ESCALATED = "escalated"
+
+
+class OrchestrationResult(BaseModel):
+    """Immutable result payload produced by the Strands Agent Orchestrator."""
+
+    model_config = ConfigDict(frozen=True)
+
+    donation_id: str = Field(..., min_length=1, max_length=128)
+    status: DonationStatus
+    classification: DonationClassification | None = None
+    matched_recipient_id: str | None = None
+    assigned_volunteer_id: str | None = None
+    escalation_ticket: EscalationTicket | None = None
+    steps_completed: list[PipelineStep] = Field(default_factory=list)
+    is_dry_run: bool = False
+    correlation_id: str = Field(..., min_length=1, max_length=128)
+

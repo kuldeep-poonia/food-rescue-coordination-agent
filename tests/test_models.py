@@ -9,13 +9,18 @@ from models import (
     Coordinates,
     Donation,
     DonationClassification,
+    DonationStateConflictError,
+    DonationStatus,
     EscalationReason,
     EscalationTicket,
     FoodCategory,
+    GuardrailViolationError,
     MatchCandidate,
     MatchResult,
     NotificationMessage,
     NotificationRecipientType,
+    OrchestrationResult,
+    PipelineStep,
     Recipient,
     UrgencyLevel,
     Volunteer,
@@ -226,4 +231,45 @@ def test_coordination_models() -> None:
         details={"attempted_candidates": 0},
     )
     assert ticket.reason == EscalationReason.NO_MATCH_WITHIN_WINDOW
+
+
+def test_orchestration_models_and_errors() -> None:
+    """Verify PipelineStep, OrchestrationResult, and exception contracts."""
+    # Pipeline steps
+    assert PipelineStep.INTAKE.value == "intake"
+    assert PipelineStep.CLAIM_RECIPIENT.value == "claim_recipient"
+    assert PipelineStep.ASSIGN_VOLUNTEER.value == "assign_volunteer"
+
+    # Exceptions
+    state_err = DonationStateConflictError("Expected MATCHED state")
+    assert isinstance(state_err, Exception)
+    assert str(state_err) == "Expected MATCHED state"
+
+    guard_err = GuardrailViolationError("Shelf life below threshold")
+    assert isinstance(guard_err, RuntimeError)
+    assert str(guard_err) == "Shelf life below threshold"
+
+    # OrchestrationResult
+    result = OrchestrationResult(
+        donation_id="don-999",
+        status=DonationStatus.ASSIGNED,
+        matched_recipient_id="rec-001",
+        assigned_volunteer_id="vol-001",
+        steps_completed=[
+            PipelineStep.INTAKE,
+            PipelineStep.CLASSIFY,
+            PipelineStep.FETCH_CAPACITY,
+            PipelineStep.MATCH,
+            PipelineStep.CLAIM_RECIPIENT,
+            PipelineStep.ASSIGN_VOLUNTEER,
+            PipelineStep.DISPATCH_NOTIFICATIONS,
+            PipelineStep.COMPLETE,
+        ],
+        is_dry_run=False,
+        correlation_id="corr-test-999",
+    )
+    assert result.donation_id == "don-999"
+    assert result.status == DonationStatus.ASSIGNED
+    assert len(result.steps_completed) == 8
+    assert not result.is_dry_run
 
