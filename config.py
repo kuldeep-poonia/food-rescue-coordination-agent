@@ -22,6 +22,20 @@ DEFAULT_CLIENT_TIMEOUT_SECONDS: int = 30
 # Maximum retry attempts for transient DynamoDB and AWS service exceptions
 MAX_TRANSIENT_RETRY_ATTEMPTS: int = 3
 
+# Industry-standard estimate: ~0.5kg per meal (1.2 lbs), per USDA
+# and Feeding America guidelines
+KG_TO_MEALS_CONVERSION_FACTOR: float = 2.0
+
+# Operational threshold: capacity warning threshold in kg for advisory
+# near-capacity flagging
+CAPACITY_WARNING_THRESHOLD_KG: float = 30.0
+
+# Session TTL in hours for day-scoped cache records (24 hours)
+DEFAULT_SESSION_TTL_HOURS: int = 24
+
+# Long-term memory TTL in days for entity operational patterns (30 days)
+DEFAULT_MEMORY_TTL_DAYS: int = 30
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -36,12 +50,17 @@ class AppConfig:
     recipients_table_name: str
     volunteers_table_name: str
     matches_audit_table_name: str
+    sessions_memory_table_name: str
     notification_topic_arn: str
     coordinator_escalation_topic_arn: str
+    coordinator_dlq_url: str
     location_place_index_name: str
     route_calculator_name: str
     bedrock_agent_id: str
     bedrock_agent_alias_id: str
+    capacity_warning_threshold_kg: float = CAPACITY_WARNING_THRESHOLD_KG
+    session_ttl_hours: int = DEFAULT_SESSION_TTL_HOURS
+    memory_ttl_days: int = DEFAULT_MEMORY_TTL_DAYS
 
 
 def load_app_configuration() -> AppConfig:
@@ -67,6 +86,9 @@ def load_app_configuration() -> AppConfig:
         matches_audit_table_name=os.environ.get(
             "MATCHES_AUDIT_TABLE_NAME", "frca-matches-audit-table"
         ),
+        sessions_memory_table_name=os.environ.get(
+            "SESSIONS_MEMORY_TABLE_NAME", "frca-sessions-memory-table"
+        ),
         notification_topic_arn=os.environ.get(
             "NOTIFICATION_TOPIC_ARN",
             "arn:aws:sns:us-east-1:123456789012:frca-notifications-placeholder",
@@ -74,6 +96,10 @@ def load_app_configuration() -> AppConfig:
         coordinator_escalation_topic_arn=os.environ.get(
             "COORDINATOR_ESCALATION_TOPIC_ARN",
             "arn:aws:sns:us-east-1:123456789012:frca-escalations-placeholder",
+        ),
+        coordinator_dlq_url=os.environ.get(
+            "COORDINATOR_DLQ_URL",
+            "https://sqs.us-east-1.amazonaws.com/123456789012/frca-coordinator-dlq-placeholder",
         ),
         location_place_index_name=os.environ.get(
             "LOCATION_INDEX_NAME", "frca-place-index-placeholder"
@@ -86,5 +112,16 @@ def load_app_configuration() -> AppConfig:
         ),
         bedrock_agent_alias_id=os.environ.get(
             "AGENT_ALIAS_ID", "BEDROCK_AGENT_ALIAS_ID_PLACEHOLDER"
+        ),
+        capacity_warning_threshold_kg=float(
+            os.environ.get(
+                "CAPACITY_WARNING_THRESHOLD_KG", str(CAPACITY_WARNING_THRESHOLD_KG)
+            )
+        ),
+        session_ttl_hours=int(
+            os.environ.get("SESSION_TTL_HOURS", str(DEFAULT_SESSION_TTL_HOURS))
+        ),
+        memory_ttl_days=int(
+            os.environ.get("MEMORY_TTL_DAYS", str(DEFAULT_MEMORY_TTL_DAYS))
         ),
     )
