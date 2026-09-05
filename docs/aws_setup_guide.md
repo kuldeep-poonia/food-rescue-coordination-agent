@@ -172,4 +172,48 @@ export DONATIONS_TABLE_NAME=frca-donations-dev
 export RECIPIENTS_TABLE_NAME=frca-recipients-dev
 export VOLUNTEERS_TABLE_NAME=frca-volunteers-dev
 export MATCHES_AUDIT_TABLE_NAME=frca-matches-audit-dev
+export SESSIONS_MEMORY_TABLE_NAME=frca-sessions-memory-dev
+export COORDINATOR_DLQ_URL=https://sqs.us-east-1.amazonaws.com/123456789012/frca-coordinator-dlq-dev
 ```
+
+---
+
+## AgentCore Runtime: Container Reuse & Bedrock Schema Compliance
+
+### 1. Module-Level Singleton Caching (Stateless Guarantee)
+
+To guarantee sub-second cold starts and optimal warm-container reuse in AWS Lambda:
+- **Cached Objects (Stateless Only)**:
+  - `_CONFIG`: Immutable application configuration (`AppConfig`).
+  - `_SQS_CLIENT`: Boto3 SQS client connection for dead-letter queuing.
+  - `_SESSION_MANAGER` & `_MEMORY_STORE`: Class instances maintaining only boto3 Table resources (`self._table`).
+  - `_ORCHESTRATOR`: Orchestrator instance holding stateless repository client handles.
+- **Strictly Excluded from In-Memory Caching (Zero Business State)**:
+  - **No `SessionContext`**, no `Donation`, and no recipient capacity/workload data is ever cached at the Lambda container level.
+  - Every invocation performs a **fresh, strongly consistent read** from DynamoDB (`ConsistentRead=True`).
+  - Session counters are mutated exclusively via DynamoDB atomic operations (`ADD total_donations_processed :one...`), eliminating the possibility of lost updates or container-level staleness across concurrent warm invocations.
+
+### 2. Bedrock Agent Action Group Response Schema Compliance
+
+The Lambda runtime (`agent/runtime.py`) formats all handler responses—including graceful throttling degradations—strictly according to the AWS Bedrock Agent Action Group response specification:
+
+```json
+{
+  "messageVersion": "1.0",
+  "response": {
+    "actionGroup": "<actionGroup>",
+    "apiPath": "<apiPath>",
+    "httpMethod": "POST",
+    "httpStatusCode": 429,
+    "responseBody": {
+      "application/json": {
+        "body": "{\"status\": \"QUEUED_FOR_COORDINATOR\", \"reason\": \"THROTTLING_DEGRADATION\", \"message\": \"...\", \"error\": \"ThrottlingException\"}"
+      }
+    }
+  }
+}
+```
+
+- **No Raw HTTP Wrappers**: Bedrock AgentCore action groups reject raw HTTP responses (e.g. `{statusCode: 429, body: ...}`). All responses in FRCA are strongly typed via Pydantic model `AgentCoreRuntimeResponse` and wrapped inside the `response` dictionary.
+- **Upstream Compatibility**: Bedrock Runtime parses the response cleanly without schema errors, enabling the agent loop to gracefully acknowledge the queued status and forward the payload to coordinator dashboards.
+
