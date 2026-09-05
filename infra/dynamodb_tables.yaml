@@ -49,8 +49,8 @@ Resources:
           AttributeType: S
         - AttributeName: service_region
           AttributeType: S
-        - AttributeName: is_active
-          AttributeType: N
+        - AttributeName: status
+          AttributeType: S
       KeySchema:
         - AttributeName: recipient_id
           KeyType: HASH
@@ -59,7 +59,7 @@ Resources:
           KeySchema:
             - AttributeName: service_region
               KeyType: HASH
-            - AttributeName: is_active
+            - AttributeName: status
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
@@ -79,8 +79,8 @@ Resources:
           AttributeType: S
         - AttributeName: service_region
           AttributeType: S
-        - AttributeName: is_available
-          AttributeType: N
+        - AttributeName: status
+          AttributeType: S
       KeySchema:
         - AttributeName: volunteer_id
           KeyType: HASH
@@ -89,7 +89,7 @@ Resources:
           KeySchema:
             - AttributeName: service_region
               KeyType: HASH
-            - AttributeName: is_available
+            - AttributeName: status
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
