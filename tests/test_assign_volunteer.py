@@ -246,6 +246,48 @@ def test_compensation_on_donation_link_failure() -> None:
     )
 
 
+def test_donation_link_failure_halts_candidate_loop() -> None:
+    """Verify donation link failure halts loop without trying other candidates."""
+    mock_d_repo = mock.create_autospec(DonationsRepository, instance=True)
+    mock_v_repo = mock.create_autospec(VolunteersRepository, instance=True)
+    mock_a_repo = mock.create_autospec(AuditRepository, instance=True)
+
+    don = make_donation()
+    vol1 = make_volunteer("vol-01", "Driver One", latitude=40.7130)
+    vol2 = make_volunteer("vol-02", "Driver Two", latitude=40.7140)
+    vol3 = make_volunteer("vol-03", "Driver Three", latitude=40.7150)
+
+    mock_d_repo.get_donation.return_value = don
+    mock_v_repo.query_available_volunteers_by_region.return_value = [
+        vol1,
+        vol2,
+        vol3,
+    ]
+    mock_v_repo.set_volunteer_availability.return_value = True
+    # Donation link fails (e.g. simulated DynamoDB condition mismatch)
+    mock_d_repo.assign_volunteer.return_value = False
+
+    result = assign_volunteer(
+        donation_id="don-assign-01",
+        service_region="metro-core",
+        donations_repo=mock_d_repo,
+        volunteers_repo=mock_v_repo,
+        audit_repo=mock_a_repo,
+    )
+
+    assert result is None
+    # Assert loop halted: only vol1 was touched (once to claim, once to compensate)
+    assert mock_v_repo.set_volunteer_availability.call_count == 2
+    mock_v_repo.set_volunteer_availability.assert_has_calls(
+        [
+            mock.call("vol-01", is_available=False),
+            mock.call("vol-01", is_available=True),
+        ]
+    )
+    # Subsequent candidates vol2 and vol3 were never called
+    mock_d_repo.assign_volunteer.assert_called_once_with("don-assign-01", "vol-01")
+
+
 def test_double_failure_raises_infrastructure_consistency_error() -> None:
     """Verify compensation double-failure raises InfrastructureConsistencyError."""
     mock_d_repo = mock.create_autospec(DonationsRepository, instance=True)
