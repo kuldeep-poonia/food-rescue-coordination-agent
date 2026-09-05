@@ -142,14 +142,15 @@ Every index in the data layer maps 1:1 to an operational access pattern:
 
 ## Deterministic Idempotency Key Strategy
 
-To eliminate accidental collisions and prevent false-positive deduplication across different donations or operational steps, all idempotency keys are deterministically generated via `build_idempotency_key(donation_id, action, attempt_number)`:
+To eliminate accidental collisions and prevent false-positive deduplication across different donations or operational steps, all idempotency keys are deterministically generated via `build_idempotency_key(donation_id, action)`:
 
 ```text
-{donation_id}:{action}:{attempt_number}
+{donation_id}:{action}
 ```
 - **`donation_id`**: Scopes the operation strictly to the target donation.
 - **`action`**: Scopes the key to the specific state mutation (e.g. `ASSIGN_VOLUNTEER`, `MATCH_RECIPIENT`).
-- **`attempt_number`**: Incremented when a fresh attempt is explicitly desired, ensuring retries of the same attempt deduplicate while deliberate re-runs succeed.
+
+This format ensures that automatic Lambda retries, network timeouts, or crash replays for the exact same logical operation always produce the exact same key, allowing DynamoDB's conditional check `attribute_not_exists(idempotency_key)` to reliably deduplicate side effects without spurious re-execution.
 
 ---
 
