@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -e
+
+echo "[pre-commit] Running ruff lint checks..."
+python -m ruff check .
+
+echo "[pre-commit] Quality gates passed successfully."
