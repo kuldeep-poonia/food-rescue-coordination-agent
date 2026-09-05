@@ -132,10 +132,12 @@ def assign_volunteer(
     Enforces:
     1. Volunteer-Agnostic Replay: Returns existing assignment if already assigned,
        recovering missing notifications if earlier process crashed mid-flight.
-    2. Candidate Race Fallback Loop: If nearest candidate was claimed concurrently,
-       cleanly advances to next-ranked candidate without compensation false alarms.
+    2. Candidate Race Fallback Loop: If nearest candidate was claimed concurrently
+       (VolunteerUnavailableError), cleanly advances to next candidate.
     3. Atomic Mutations: Sets volunteer unavailable, then links donation.
-       Rolls back volunteer status if donation link fails.
+       If donation link fails, rolls back volunteer status and immediately halts
+       the loop returning None (no further candidates attempted), allowing caller
+       to escalate via NO_MATCH_WITHIN_WINDOW.
     4. Post-Mutation Audit & Notification: Records audit trail and dispatches SNS.
 
     Args:
