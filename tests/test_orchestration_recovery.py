@@ -10,6 +10,7 @@ from donations_repo import (
     DonationsRepository,
 )
 from models import (
+    AuditEvent,
     Coordinates,
     Donation,
     DonationStatus,
@@ -18,6 +19,7 @@ from models import (
     FoodCategory,
     MatchCandidate,
     MatchResult,
+    NotificationRecipientType,
     PipelineStep,
     VolunteerAssignment,
 )
@@ -79,10 +81,12 @@ def test_terminal_status_escalated_and_completed_no_op() -> None:
 def test_replay_recovery_for_assigned_status() -> None:
     """Verify ASSIGNED status triggers replay recovery without re-dispatching."""
     mock_donations = mock.create_autospec(DonationsRepository, instance=True)
+    mock_recipients = mock.create_autospec(RecipientsRepository, instance=True)
     mock_volunteers = mock.create_autospec(VolunteersRepository, instance=True)
     mock_audit = mock.create_autospec(AuditRepository, instance=True)
     orchestrator = StrandsOrchestrator(
         donations_repo=mock_donations,
+        recipients_repo=mock_recipients,
         volunteers_repo=mock_volunteers,
         audit_repo=mock_audit,
     )
@@ -95,7 +99,36 @@ def test_replay_recovery_for_assigned_status() -> None:
     )
     mock_donations.get_donation.return_value = donation
 
-    with mock.patch("agent.orchestrator.assign_volunteer") as mock_assign:
+    # Pre-populate audit trail indicating all notifications were already sent
+    mock_audit.query_audit_trail_by_donation.return_value = [
+        AuditEvent(
+            event_id="evt-v1",
+            donation_id="don-assigned-01",
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key="don-assigned-01:notify_volunteer",
+            details={},
+        ),
+        AuditEvent(
+            event_id="evt-d1",
+            donation_id="don-assigned-01",
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key="don-assigned-01:notify_donor",
+            details={},
+        ),
+        AuditEvent(
+            event_id="evt-r1",
+            donation_id="don-assigned-01",
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key="don-assigned-01:notify_recipient",
+            details={},
+        ),
+    ]
+
+    with mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
+         mock.patch("agent.orchestrator.send_notification") as mock_notify:
         mock_assign.return_value = VolunteerAssignment(
             assignment_id="asg-replay-01",
             donation_id="don-assigned-01",
@@ -106,8 +139,86 @@ def test_replay_recovery_for_assigned_status() -> None:
 
         assert result.status == DonationStatus.ASSIGNED
         assert result.assigned_volunteer_id == "vol-01"
-        assert result.steps_completed == [PipelineStep.ASSIGN_VOLUNTEER]
+        assert result.steps_completed == [
+            PipelineStep.ASSIGN_VOLUNTEER,
+            PipelineStep.DISPATCH_NOTIFICATIONS,
+        ]
         mock_assign.assert_called_once()
+        # All notifications were already recorded in audit trail -> zero dispatches
+        mock_notify.assert_not_called()
+
+
+def test_resume_from_assigned_status_recovers_missing_recipient_notification() -> None:
+    """Verify crash after donor dispatch resumes and sends only recipient alert."""
+    mock_donations = mock.create_autospec(DonationsRepository, instance=True)
+    mock_recipients = mock.create_autospec(RecipientsRepository, instance=True)
+    mock_volunteers = mock.create_autospec(VolunteersRepository, instance=True)
+    mock_audit = mock.create_autospec(AuditRepository, instance=True)
+    mock_audit.record_audit_event.return_value = True
+
+    orchestrator = StrandsOrchestrator(
+        donations_repo=mock_donations,
+        recipients_repo=mock_recipients,
+        volunteers_repo=mock_volunteers,
+        audit_repo=mock_audit,
+    )
+
+    donation = make_test_donation(
+        donation_id="don-assigned-02",
+        status=DonationStatus.ASSIGNED,
+        matched_recipient_id="rec-02",
+        assigned_volunteer_id="vol-02",
+    )
+    mock_donations.get_donation.return_value = donation
+
+    # Crash occurred after donor notification was sent, before recipient notification
+    mock_audit.query_audit_trail_by_donation.return_value = [
+        AuditEvent(
+            event_id="evt-v2",
+            donation_id="don-assigned-02",
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key="don-assigned-02:notify_volunteer",
+            details={},
+        ),
+        AuditEvent(
+            event_id="evt-d2",
+            donation_id="don-assigned-02",
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key="don-assigned-02:notify_donor",
+            details={},
+        ),
+        # Notice don-assigned-02:notify_recipient is missing!
+    ]
+
+    with mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
+         mock.patch("agent.orchestrator.send_notification") as mock_notify:
+        mock_assign.return_value = VolunteerAssignment(
+            assignment_id="asg-replay-02",
+            donation_id="don-assigned-02",
+            volunteer_id="vol-02",
+            recipient_id="rec-02",
+        )
+
+        result = orchestrator.coordinate_donation("don-assigned-02")
+
+        assert result.status == DonationStatus.ASSIGNED
+        assert result.assigned_volunteer_id == "vol-02"
+
+        # Donor notification must NOT be re-sent (zero duplicates)
+        # Recipient notification MUST be sent exactly once
+        assert mock_notify.call_count == 1
+        call_kwargs = mock_notify.call_args[1]
+        assert call_kwargs["recipient_type"] == NotificationRecipientType.RECIPIENT
+
+        # Ensure recipient notification audit event was persisted
+        mock_audit.record_audit_event.assert_called_once()
+        recorded_event = mock_audit.record_audit_event.call_args[0][0]
+        assert (
+            recorded_event.idempotency_key
+            == "don-assigned-02:notify_recipient"
+        )
 
 
 def test_resume_from_matched_status_skips_match_and_deduct() -> None:

@@ -17,6 +17,7 @@ from donations_repo import (
 )
 from models import (
     AuditEvent,
+    Donation,
     DonationClassification,
     DonationStatus,
     EscalationReason,
@@ -81,6 +82,201 @@ class StrandsOrchestrator:
             distance_calculator or GeodesicDistanceCalculator()
         )
         self._sns_client = sns_client
+
+    def _dispatch_donor_notification(
+        self,
+        donation: Donation,
+        recipient_name: str,
+        volunteer_name: str,
+        correlation_id: str,
+        dispatched_keys: set[str],
+    ) -> None:
+        """Dispatch donor confirmation notification if not previously sent."""
+        idempotency_key = f"{donation.donation_id}:notify_donor"
+        if idempotency_key in dispatched_keys:
+            LOGGER.info(
+                "Donor notification already dispatched for donation %s (key: %s)",
+                donation.donation_id,
+                idempotency_key,
+                extra={"correlation_id": correlation_id},
+            )
+            return
+
+        send_notification(
+            recipient_type=NotificationRecipientType.DONOR,
+            destination=donation.donor_phone,
+            template_id="DONOR_CONFIRMATION_V1",
+            parameters={
+                "donor_name": donation.donor_name,
+                "quantity_kg": donation.quantity_kg,
+                "food_category": donation.food_category.value,
+                "recipient_name": recipient_name,
+                "volunteer_name": volunteer_name,
+                "ready_by": donation.ready_by.isoformat(),
+            },
+            correlation_id=correlation_id,
+            sns_client=self._sns_client,
+        )
+
+        audit_event = AuditEvent(
+            event_id=f"evt-{uuid.uuid4().hex[:12]}",
+            donation_id=donation.donation_id,
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key=idempotency_key,
+            details={
+                "recipient_type": NotificationRecipientType.DONOR.value,
+                "destination": donation.donor_phone,
+                "correlation_id": correlation_id,
+            },
+        )
+        self._audit_repo.record_audit_event(audit_event)
+        dispatched_keys.add(idempotency_key)
+
+    def _dispatch_recipient_notification(
+        self,
+        donation: Donation,
+        recipient_id: str | None,
+        contact_name: str,
+        volunteer_name: str,
+        correlation_id: str,
+        dispatched_keys: set[str],
+    ) -> None:
+        """Dispatch recipient confirmation notification if not previously sent."""
+        idempotency_key = f"{donation.donation_id}:notify_recipient"
+        if idempotency_key in dispatched_keys:
+            LOGGER.info(
+                "Recipient notification already sent for donation %s (key: %s)",
+                donation.donation_id,
+                idempotency_key,
+                extra={"correlation_id": correlation_id},
+            )
+            return
+
+        rec_entity = (
+            self._recipients_repo.get_recipient(recipient_id)
+            if recipient_id
+            else None
+        )
+        rec_phone = (
+            rec_entity.contact_phone if rec_entity else donation.donor_phone
+        )
+        target_contact = (
+            rec_entity.contact_name if rec_entity else contact_name
+        )
+
+        send_notification(
+            recipient_type=NotificationRecipientType.RECIPIENT,
+            destination=rec_phone,
+            template_id="RECIPIENT_CONFIRMATION_V1",
+            parameters={
+                "contact_name": target_contact,
+                "quantity_kg": donation.quantity_kg,
+                "food_category": donation.food_category.value,
+                "donor_name": donation.donor_name,
+                "volunteer_name": volunteer_name,
+            },
+            correlation_id=correlation_id,
+            sns_client=self._sns_client,
+        )
+
+        audit_event = AuditEvent(
+            event_id=f"evt-{uuid.uuid4().hex[:12]}",
+            donation_id=donation.donation_id,
+            action="NOTIFICATION_DISPATCHED",
+            actor="strands_orchestrator",
+            idempotency_key=idempotency_key,
+            details={
+                "recipient_type": NotificationRecipientType.RECIPIENT.value,
+                "destination": rec_phone,
+                "correlation_id": correlation_id,
+            },
+        )
+        self._audit_repo.record_audit_event(audit_event)
+        dispatched_keys.add(idempotency_key)
+
+    def _handle_assigned_replay(
+        self,
+        donation: Donation,
+        correlation_id: str,
+        dry_run: bool,
+    ) -> OrchestrationResult:
+        """Replay recovery for already ASSIGNED donations ensuring all dispatches."""
+        LOGGER.info(
+            "Donation %s already ASSIGNED, executing replay recovery",
+            donation.donation_id,
+            extra={"correlation_id": correlation_id},
+        )
+        assignment = assign_volunteer(
+            donation_id=donation.donation_id,
+            service_region="metro-core",
+            correlation_id=correlation_id,
+            donations_repo=self._donations_repo,
+            volunteers_repo=self._volunteers_repo,
+            audit_repo=self._audit_repo,
+            distance_calculator=self._distance_calculator,
+            sns_client=self._sns_client,
+        )
+
+        assigned_vol_id = (
+            assignment.volunteer_id
+            if assignment
+            else donation.assigned_volunteer_id
+        )
+        vol_name = "Assigned Volunteer"
+        if assigned_vol_id:
+            vol_entity = self._volunteers_repo.get_volunteer(assigned_vol_id)
+            if vol_entity:
+                vol_name = vol_entity.volunteer_name
+
+        rec_name = "Community Partner"
+        contact_name = "Coordinator"
+        if donation.matched_recipient_id:
+            rec_entity = self._recipients_repo.get_recipient(
+                donation.matched_recipient_id
+            )
+            if rec_entity:
+                rec_name = rec_entity.organization_name
+                contact_name = rec_entity.contact_name
+
+        if not dry_run:
+            audit_trail = self._audit_repo.query_audit_trail_by_donation(
+                donation.donation_id
+            )
+            dispatched_keys = {
+                evt.idempotency_key
+                for evt in audit_trail
+                if evt.action == "NOTIFICATION_DISPATCHED" and evt.idempotency_key
+            }
+
+            self._dispatch_donor_notification(
+                donation=donation,
+                recipient_name=rec_name,
+                volunteer_name=vol_name,
+                correlation_id=correlation_id,
+                dispatched_keys=dispatched_keys,
+            )
+            self._dispatch_recipient_notification(
+                donation=donation,
+                recipient_id=donation.matched_recipient_id,
+                contact_name=contact_name,
+                volunteer_name=vol_name,
+                correlation_id=correlation_id,
+                dispatched_keys=dispatched_keys,
+            )
+
+        return OrchestrationResult(
+            donation_id=donation.donation_id,
+            status=DonationStatus.ASSIGNED,
+            matched_recipient_id=donation.matched_recipient_id,
+            assigned_volunteer_id=assigned_vol_id,
+            steps_completed=[
+                PipelineStep.ASSIGN_VOLUNTEER,
+                PipelineStep.DISPATCH_NOTIFICATIONS,
+            ],
+            is_dry_run=dry_run,
+            correlation_id=correlation_id,
+        )
 
     def coordinate_donation(
         self,
@@ -148,31 +344,10 @@ class StrandsOrchestrator:
 
         # Replay recovery check for already assigned donations
         if donation.status == DonationStatus.ASSIGNED:
-            LOGGER.info(
-                "Donation %s already ASSIGNED, executing replay recovery",
-                donation_id,
-                extra={"correlation_id": corr_id},
-            )
-            assignment = assign_volunteer(
-                donation_id=donation_id,
-                service_region="metro-core",
+            return self._handle_assigned_replay(
+                donation=donation,
                 correlation_id=corr_id,
-                donations_repo=self._donations_repo,
-                volunteers_repo=self._volunteers_repo,
-                audit_repo=self._audit_repo,
-                distance_calculator=self._distance_calculator,
-                sns_client=self._sns_client,
-            )
-            return OrchestrationResult(
-                donation_id=donation_id,
-                status=DonationStatus.ASSIGNED,
-                matched_recipient_id=donation.matched_recipient_id,
-                assigned_volunteer_id=(
-                    assignment.volunteer_id if assignment else None
-                ),
-                steps_completed=[PipelineStep.ASSIGN_VOLUNTEER],
-                is_dry_run=dry_run,
-                correlation_id=corr_id,
+                dry_run=dry_run,
             )
 
         # Resume point check: Crash occurred after atomic claim + deduct
@@ -307,9 +482,85 @@ class StrandsOrchestrator:
             claimed_candidate: MatchCandidate | None = None
 
             if dry_run:
-                claimed_candidate = match_result.ranked_candidates[0]
-                target_recipient_id = claimed_candidate.recipient_id
-                target_recipient_name = claimed_candidate.recipient_name
+                # Read-only simulation: verify claimability and capacity
+                if (
+                    donation.status != DonationStatus.REPORTED
+                    or donation.matched_recipient_id is not None
+                ):
+                    LOGGER.warning(
+                        "Dry-run simulation detected state conflict for %s",
+                        donation_id,
+                        extra={"correlation_id": corr_id},
+                    )
+                    ticket = flag_for_human(
+                        donation_id=donation_id,
+                        reason=EscalationReason.RECIPIENT_CLAIM_CONFLICT,
+                        summary=f"Donation {donation_id} already claimed",
+                        details={"simulated_conflict": True},
+                        correlation_id=corr_id,
+                        donations_repo=self._donations_repo,
+                        audit_repo=self._audit_repo,
+                        sns_client=self._sns_client,
+                    )
+                    return OrchestrationResult(
+                        donation_id=donation_id,
+                        status=DonationStatus.ESCALATED,
+                        classification=classification,
+                        escalation_ticket=ticket,
+                        steps_completed=guardrail.completed_steps,
+                        is_dry_run=dry_run,
+                        correlation_id=corr_id,
+                    )
+
+                for candidate in match_result.ranked_candidates:
+                    rec_entity = self._recipients_repo.get_recipient(
+                        candidate.recipient_id, consistent_read=True
+                    )
+                    if (
+                        rec_entity is not None
+                        and rec_entity.capacity_kg_remaining
+                        >= donation.quantity_kg
+                    ):
+                        claimed_candidate = candidate
+                        target_recipient_id = candidate.recipient_id
+                        target_recipient_name = candidate.recipient_name
+                        break
+                    LOGGER.info(
+                        "Dry-run: candidate %s lacks capacity, trying next",
+                        candidate.recipient_id,
+                        extra={"correlation_id": corr_id},
+                    )
+
+                if claimed_candidate is None:
+                    LOGGER.warning(
+                        "Dry-run: All %d candidates lack capacity for %s",
+                        len(match_result.ranked_candidates),
+                        donation_id,
+                        extra={"correlation_id": corr_id},
+                    )
+                    ticket = flag_for_human(
+                        donation_id=donation_id,
+                        reason=EscalationReason.NO_MATCH_WITHIN_WINDOW,
+                        summary="All matched recipient candidates lack capacity",
+                        details={
+                            "exhausted_candidates": len(
+                                match_result.ranked_candidates
+                            )
+                        },
+                        correlation_id=corr_id,
+                        donations_repo=self._donations_repo,
+                        audit_repo=self._audit_repo,
+                        sns_client=self._sns_client,
+                    )
+                    return OrchestrationResult(
+                        donation_id=donation_id,
+                        status=DonationStatus.ESCALATED,
+                        classification=classification,
+                        escalation_ticket=ticket,
+                        steps_completed=guardrail.completed_steps,
+                        is_dry_run=dry_run,
+                        correlation_id=corr_id,
+                    )
             else:
                 for candidate in match_result.ranked_candidates:
                     try:
@@ -457,51 +708,33 @@ class StrandsOrchestrator:
                 volunteer_name = vol_entity.volunteer_name
 
         # ----------------------------------------------------------------------
-        # Step 9: Dispatch Notifications
+        # Step 9: Dispatch Notifications with Idempotency Tracking
         # ----------------------------------------------------------------------
         guardrail.record_step(PipelineStep.DISPATCH_NOTIFICATIONS)
         if not dry_run:
-            # Donor confirmation
-            send_notification(
-                recipient_type=NotificationRecipientType.DONOR,
-                destination=donation.donor_phone,
-                template_id="DONOR_CONFIRMATION_V1",
-                parameters={
-                    "donor_name": donation.donor_name,
-                    "quantity_kg": donation.quantity_kg,
-                    "food_category": donation.food_category.value,
-                    "recipient_name": target_recipient_name,
-                    "volunteer_name": volunteer_name,
-                    "ready_by": donation.ready_by.isoformat(),
-                },
-                correlation_id=corr_id,
-                sns_client=self._sns_client,
+            audit_trail = self._audit_repo.query_audit_trail_by_donation(
+                donation.donation_id
             )
-            # Recipient confirmation
-            rec_entity = (
-                self._recipients_repo.get_recipient(target_recipient_id)
-                if target_recipient_id
-                else None
-            )
-            rec_phone = (
-                rec_entity.contact_phone if rec_entity else donation.donor_phone
-            )
-            if rec_entity:
-                target_contact_name = rec_entity.contact_name
+            dispatched_keys = {
+                evt.idempotency_key
+                for evt in audit_trail
+                if evt.action == "NOTIFICATION_DISPATCHED" and evt.idempotency_key
+            }
 
-            send_notification(
-                recipient_type=NotificationRecipientType.RECIPIENT,
-                destination=rec_phone,
-                template_id="RECIPIENT_CONFIRMATION_V1",
-                parameters={
-                    "contact_name": target_contact_name,
-                    "quantity_kg": donation.quantity_kg,
-                    "food_category": donation.food_category.value,
-                    "donor_name": donation.donor_name,
-                    "volunteer_name": volunteer_name,
-                },
+            self._dispatch_donor_notification(
+                donation=donation,
+                recipient_name=target_recipient_name,
+                volunteer_name=volunteer_name,
                 correlation_id=corr_id,
-                sns_client=self._sns_client,
+                dispatched_keys=dispatched_keys,
+            )
+            self._dispatch_recipient_notification(
+                donation=donation,
+                recipient_id=target_recipient_id,
+                contact_name=target_contact_name,
+                volunteer_name=volunteer_name,
+                correlation_id=corr_id,
+                dispatched_keys=dispatched_keys,
             )
 
         # ----------------------------------------------------------------------
