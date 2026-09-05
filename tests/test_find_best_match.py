@@ -23,6 +23,7 @@ def make_donation(
         quantity_kg=quantity_kg,
         ready_by=future,
         perishability_hours=6.0,
+        service_region="metro-core",
     )
 
 

@@ -40,6 +40,7 @@ def make_test_donation(
         quantity_kg=quantity_kg,
         ready_by=now + timedelta(hours=1),
         perishability_hours=perishability_hours,
+        service_region="metro-core",
         status=DonationStatus.REPORTED,
     )
 
@@ -285,6 +286,7 @@ def test_dry_run_with_food_safety_breach_escalates_without_mutations() -> None:
         quantity_kg=10.0,
         ready_by=now + timedelta(minutes=5),
         perishability_hours=0.5,
+        service_region="metro-core",
         status=DonationStatus.REPORTED,
     )
     mock_donations.get_donation.return_value = donation

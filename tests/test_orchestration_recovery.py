@@ -48,6 +48,7 @@ def make_test_donation(
         quantity_kg=quantity_kg,
         ready_by=now + timedelta(hours=1),
         perishability_hours=perishability_hours,
+        service_region="metro-core",
         status=status,
         matched_recipient_id=matched_recipient_id,
         assigned_volunteer_id=assigned_volunteer_id,

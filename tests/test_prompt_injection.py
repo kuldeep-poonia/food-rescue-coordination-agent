@@ -39,6 +39,7 @@ def make_adversarial_donation(
         quantity_kg=25.0,
         ready_by=now + timedelta(hours=2),
         perishability_hours=12.0,
+        service_region="metro-core",
         status=DonationStatus.REPORTED,
     )
 

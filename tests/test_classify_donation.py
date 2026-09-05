@@ -23,6 +23,7 @@ def make_test_donation(
         quantity_kg=25.0,
         ready_by=ready_by,
         perishability_hours=perishability_hours,
+        service_region="metro-core",
     )
 
 

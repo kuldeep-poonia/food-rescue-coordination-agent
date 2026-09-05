@@ -75,9 +75,11 @@ class Donation(BaseModel):
     ready_by: datetime
     perishability_hours: float = Field(..., gt=0.0, le=168.0)
     status: DonationStatus = DonationStatus.REPORTED
+    service_region: str = Field(..., min_length=1, max_length=64)
     matched_recipient_id: str | None = None
     assigned_volunteer_id: str | None = None
     escalation_reason: EscalationReason | None = None
+    date_status: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -330,4 +332,81 @@ class OrchestrationResult(BaseModel):
     steps_completed: list[PipelineStep] = Field(default_factory=list)
     is_dry_run: bool = False
     correlation_id: str = Field(..., min_length=1, max_length=128)
+
+
+class SessionContext(BaseModel):
+    """Day-scoped operational context and metrics for an active service region."""
+
+    model_config = ConfigDict(frozen=True)
+
+    session_id: str = Field(..., min_length=1, max_length=128)
+    service_region: str = Field(..., min_length=1, max_length=64)
+    session_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    recipients_near_capacity: list[str] = Field(default_factory=list)
+    recent_volunteer_assignments: dict[str, int] = Field(default_factory=dict)
+    total_donations_processed: int = Field(default=0, ge=0)
+    total_kg_routed: float = Field(default=0.0, ge=0.0)
+    active_escalations_count: int = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    ttl_epoch: int = Field(..., gt=0)
+
+
+class RunningSummary(BaseModel):
+    """Authoritative summary of routed donations and community impact for reporting."""
+
+    model_config = ConfigDict(frozen=True)
+
+    service_region: str = Field(..., min_length=1, max_length=64)
+    date_str: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    total_kg_routed: float = Field(default=0.0, ge=0.0)
+    meals_equivalent: int = Field(default=0, ge=0)
+    organizations_served: int = Field(default=0, ge=0)
+    donations_count: int = Field(default=0, ge=0)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class MemoryEntry(BaseModel):
+    """Long-term entity pattern or operational insight with strict PII scrubbing."""
+
+    model_config = ConfigDict(frozen=True)
+
+    memory_id: str = Field(..., min_length=1, max_length=128)
+    entity_type: str = Field(..., pattern=r"^(donor|recipient)$")
+    entity_id: str = Field(..., min_length=1, max_length=128)
+    pattern_type: str = Field(..., min_length=1, max_length=64)
+    insights: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    ttl_epoch: int = Field(..., gt=0)
+
+
+class AgentCoreRuntimeEvent(BaseModel):
+    """Standard AWS Bedrock AgentCore Runtime invocation event."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message_version: str = Field(default="1.0", alias="messageVersion")
+    agent: dict[str, Any] = Field(default_factory=dict)
+    action_group: str = Field(default="", alias="actionGroup")
+    api_path: str = Field(default="", alias="apiPath")
+    http_method: str = Field(default="POST", alias="httpMethod")
+    parameters: list[dict[str, Any]] = Field(default_factory=list)
+    request_body: dict[str, Any] = Field(default_factory=dict, alias="requestBody")
+    session_id: str = Field(default="", alias="sessionId")
+    session_attributes: dict[str, str] = Field(
+        default_factory=dict, alias="sessionAttributes"
+    )
+    prompt_session_attributes: dict[str, str] = Field(
+        default_factory=dict, alias="promptSessionAttributes"
+    )
+
+
+class AgentCoreRuntimeResponse(BaseModel):
+    """Standard AWS Bedrock AgentCore Runtime action group response."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message_version: str = Field(default="1.0", alias="messageVersion")
+    response: dict[str, Any]
+
 

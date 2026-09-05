@@ -40,6 +40,7 @@ def make_donation(
         quantity_kg=quantity_kg,
         ready_by=future,
         perishability_hours=6.0,
+        service_region="metro-core",
         status=status,
         matched_recipient_id="rec-001",
         assigned_volunteer_id=assigned_volunteer_id,

@@ -6,6 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from models import (
+    AgentCoreRuntimeEvent,
+    AgentCoreRuntimeResponse,
     Coordinates,
     Donation,
     DonationClassification,
@@ -17,11 +19,14 @@ from models import (
     GuardrailViolationError,
     MatchCandidate,
     MatchResult,
+    MemoryEntry,
     NotificationMessage,
     NotificationRecipientType,
     OrchestrationResult,
     PipelineStep,
     Recipient,
+    RunningSummary,
+    SessionContext,
     UrgencyLevel,
     Volunteer,
     VolunteerAssignment,
@@ -54,6 +59,7 @@ def test_donation_rejects_negative_quantity() -> None:
             quantity_kg=-5.0,  # Negative quantity
             ready_by=future_time,
             perishability_hours=12.0,
+            service_region="metro-core",
         )
     assert "quantity_kg" in str(exc_info.value)
 
@@ -74,6 +80,7 @@ def test_donation_rejects_past_expiry() -> None:
             quantity_kg=15.0,
             ready_by=past_time,  # Past timestamp
             perishability_hours=12.0,
+            service_region="metro-core",
         )
     assert "ready_by timestamp must be in the future" in str(exc_info.value)
 
@@ -96,6 +103,7 @@ def test_donation_rejects_malformed_phone() -> None:
                 quantity_kg=10.0,
                 ready_by=future_time,
                 perishability_hours=6.0,
+                service_region="metro-core",
             )
 
 
@@ -116,7 +124,32 @@ def test_donation_rejects_oversized_string_input() -> None:
             quantity_kg=10.0,
             ready_by=future_time,
             perishability_hours=6.0,
+            service_region="metro-core",
         )
+
+
+def test_donation_rejects_missing_service_region() -> None:
+    """Verify omitted service_region triggers validation error.
+
+    Zero silent fallback is permitted.
+    """
+    future_time = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Donation(  # type: ignore[call-arg]
+            donation_id="don-005",
+            donor_id="donor-1",
+            donor_name="Downtown Bakery",
+            donor_phone="+12125550199",
+            donor_address="123 Main St",
+            donor_coordinates=create_valid_coordinates(),
+            food_category=FoodCategory.BAKERY,
+            quantity_kg=10.0,
+            ready_by=future_time,
+            perishability_hours=6.0,
+            # service_region deliberately omitted
+        )
+    assert "service_region" in str(exc_info.value)
 
 
 def test_recipient_rejects_negative_capacity() -> None:
@@ -272,4 +305,118 @@ def test_orchestration_models_and_errors() -> None:
     assert result.status == DonationStatus.ASSIGNED
     assert len(result.steps_completed) == 8
     assert not result.is_dry_run
+
+
+def test_session_context_model() -> None:
+    """Verify initialization, invariants, and validation of SessionContext model."""
+    session = SessionContext(
+        session_id="session-metro-core-2026-09-05",
+        service_region="metro-core",
+        session_date="2026-09-05",
+        recipients_near_capacity=["rec-001"],
+        recent_volunteer_assignments={"vol-001": 2},
+        total_donations_processed=5,
+        total_kg_routed=125.5,
+        active_escalations_count=1,
+        ttl_epoch=1788566400,
+    )
+    assert session.session_id == "session-metro-core-2026-09-05"
+    assert session.service_region == "metro-core"
+    assert session.total_donations_processed == 5
+    assert session.total_kg_routed == 125.5
+    assert session.recipients_near_capacity == ["rec-001"]
+    assert session.recent_volunteer_assignments["vol-001"] == 2
+
+    # Verify invalid date pattern fails validation
+    with pytest.raises(ValidationError):
+        SessionContext(
+            session_id="session-bad",
+            service_region="metro-core",
+            session_date="bad-date",
+            ttl_epoch=1788566400,
+        )
+
+
+def test_running_summary_model() -> None:
+    """Verify initialization and attributes of RunningSummary model."""
+    summary = RunningSummary(
+        service_region="metro-core",
+        date_str="2026-09-05",
+        total_kg_routed=250.0,
+        meals_equivalent=500,
+        organizations_served=4,
+        donations_count=10,
+    )
+    assert summary.service_region == "metro-core"
+    assert summary.date_str == "2026-09-05"
+    assert summary.total_kg_routed == 250.0
+    assert summary.meals_equivalent == 500
+    assert summary.organizations_served == 4
+    assert summary.donations_count == 10
+
+    # Negative meals_equivalent rejected
+    with pytest.raises(ValidationError):
+        RunningSummary(
+            service_region="metro-core",
+            date_str="2026-09-05",
+            total_kg_routed=250.0,
+            meals_equivalent=-1,
+            organizations_served=4,
+            donations_count=10,
+        )
+
+
+def test_memory_entry_model() -> None:
+    """Verify MemoryEntry model structure, entity_type restriction, and validation."""
+    entry = MemoryEntry(
+        memory_id="mem-001",
+        entity_type="donor",
+        entity_id="donor-100",
+        pattern_type="recurring_surplus",
+        insights={"typical_kg": 45.0, "preferred_pickup_hour": 16},
+        ttl_epoch=1791158400,
+    )
+    assert entry.entity_type == "donor"
+    assert entry.pattern_type == "recurring_surplus"
+    assert entry.insights["typical_kg"] == 45.0
+
+    # Invalid entity_type rejected
+    with pytest.raises(ValidationError):
+        MemoryEntry(
+            memory_id="mem-002",
+            entity_type="invalid_type",
+            entity_id="id-100",
+            pattern_type="pattern",
+            ttl_epoch=1791158400,
+        )
+
+
+def test_agent_core_runtime_models() -> None:
+    """Verify Bedrock AgentCore runtime event and response models."""
+    raw_event = {
+        "messageVersion": "1.0",
+        "agent": {"name": "frca-agent", "id": "agt-123"},
+        "actionGroup": "coordinate_donation",
+        "apiPath": "/coordinate",
+        "httpMethod": "POST",
+        "parameters": [{"name": "donation_id", "value": "don-123"}],
+        "requestBody": {"content": {"application/json": {"donation_id": "don-123"}}},
+        "sessionId": "session-metro-core-2026-09-05",
+    }
+    event = AgentCoreRuntimeEvent.model_validate(raw_event)
+    assert event.action_group == "coordinate_donation"
+    assert event.session_id == "session-metro-core-2026-09-05"
+    assert event.http_method == "POST"
+
+    response = AgentCoreRuntimeResponse(
+        messageVersion="1.0",
+        response={
+            "actionGroup": "coordinate_donation",
+            "apiPath": "/coordinate",
+            "httpStatusCode": 200,
+            "responseBody": {"application/json": {"status": "ASSIGNED"}},
+        },
+    )
+    assert response.response["httpStatusCode"] == 200
+
 

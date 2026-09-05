@@ -55,6 +55,7 @@ def test_concurrent_load_two_hundred_donations() -> None:
             quantity_kg=10.0 + (j % 40),
             ready_by=now + timedelta(hours=2 + (j % 5)),
             perishability_hours=4.0 + (j % 8),
+            service_region="metro-core",
         )
         for j in range(200)
     ]

@@ -43,6 +43,7 @@ def make_test_donation(
         quantity_kg=20.0,
         ready_by=now + timedelta(hours=1),
         perishability_hours=perishability_hours,
+        service_region="metro-core",
         status=status,
     )
 
@@ -75,6 +76,7 @@ def test_escalation_on_food_safety_threshold_breach() -> None:
         quantity_kg=20.0,
         ready_by=now + timedelta(minutes=5),
         perishability_hours=0.5,
+        service_region="metro-core",
         status=DonationStatus.REPORTED,
     )
     mock_donations.get_donation.return_value = donation

@@ -34,6 +34,7 @@ def make_test_donation(
         quantity_kg=25.0,
         ready_by=datetime.now(timezone.utc) + timedelta(hours=4),
         perishability_hours=6.0,
+        service_region="metro-core",
     )
 
 
