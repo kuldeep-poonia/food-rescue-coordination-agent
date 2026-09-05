@@ -14,6 +14,7 @@ from donations_repo import (
     DonationClaimConflictError,
     DonationsRepository,
     DonationStateConflictError,
+    compute_date_status,
 )
 from idempotency import build_idempotency_key
 from models import (
@@ -21,6 +22,7 @@ from models import (
     Coordinates,
     Donation,
     DonationStatus,
+    EscalationReason,
     FoodCategory,
     InfrastructureConsistencyError,
     Recipient,
@@ -149,6 +151,40 @@ class MockDynamoDBTable:
                         "UpdateItem",
                     )
 
+            # Evaluate conditional checks for escalation
+            if (
+                ExpressionAttributeValues
+                and ":escalated_status" in ExpressionAttributeValues
+            ):
+                cur_status = item.get("status")
+                if cur_status not in ("reported", "matched", "escalated"):
+                    raise ClientError(
+                        {"Error": {"Code": "ConditionalCheckFailedException"}},
+                        "UpdateItem",
+                    )
+                if (
+                    ":expected_status" in ExpressionAttributeValues
+                    and cur_status != ExpressionAttributeValues[":expected_status"]
+                ):
+                    raise ClientError(
+                        {"Error": {"Code": "ConditionalCheckFailedException"}},
+                        "UpdateItem",
+                    )
+
+            # Evaluate conditional checks for volunteer assignment
+            if (
+                ExpressionAttributeValues
+                and ":assigned_status" in ExpressionAttributeValues
+                and (
+                    item.get("status") != "matched"
+                    or item.get("assigned_volunteer_id") is not None
+                )
+            ):
+                raise ClientError(
+                    {"Error": {"Code": "ConditionalCheckFailedException"}},
+                    "UpdateItem",
+                )
+
             # Apply state updates
             if ExpressionAttributeValues:
                 if "REMOVE matched_recipient_id" in UpdateExpression:
@@ -171,6 +207,21 @@ class MockDynamoDBTable:
 
                 if ":new_state" in ExpressionAttributeValues:
                     item["status"] = ExpressionAttributeValues[":new_state"]
+
+                if ":escalated_status" in ExpressionAttributeValues:
+                    item["status"] = ExpressionAttributeValues[":escalated_status"]
+                    item["escalation_reason"] = ExpressionAttributeValues.get(":reason")
+
+                if ":assigned_status" in ExpressionAttributeValues:
+                    item["status"] = ExpressionAttributeValues[":assigned_status"]
+                    vol_id = ExpressionAttributeValues.get(":volunteer_id")
+                    item["assigned_volunteer_id"] = vol_id
+
+                if ":date_status" in ExpressionAttributeValues:
+                    item["date_status"] = ExpressionAttributeValues[":date_status"]
+
+                if ":now" in ExpressionAttributeValues:
+                    item["updated_at"] = ExpressionAttributeValues[":now"]
 
             return {"Attributes": item.copy()}
 
@@ -217,6 +268,7 @@ def test_concurrent_donation_claim_race_condition(
         quantity_kg=50.0,
         ready_by=datetime.now(timezone.utc) + timedelta(hours=3),
         perishability_hours=24.0,
+        service_region="metro-core",
     )
     repo.create_donation(donation)
 
@@ -270,6 +322,7 @@ def test_dynamodb_throttling_retry_with_backoff(
         quantity_kg=20.0,
         ready_by=datetime.now(timezone.utc) + timedelta(hours=4),
         perishability_hours=48.0,
+        service_region="metro-core",
     )
 
     table = mock_dynamodb.Table(repo._config.donations_table_name)
@@ -446,6 +499,7 @@ def test_donation_unclaim_conditional_rollback(
         quantity_kg=50.0,
         ready_by=datetime.now(timezone.utc) + timedelta(hours=3),
         perishability_hours=24.0,
+        service_region="metro-core",
     )
     repo.create_donation(donation)
 
@@ -556,3 +610,179 @@ def test_unclaim_and_restore_transaction_error_handling() -> None:
     )
     with pytest.raises(InfrastructureConsistencyError):
         repo.unclaim_and_restore_recipient("don-1", "rec-1", 25.0)
+
+
+def test_donations_repo_compute_date_status_across_mutations(
+    mock_dynamodb: MockDynamoDBResource,
+) -> None:
+    """Verify compute_date_status and date_status across donation lifecycle."""
+    repo = DonationsRepository(dynamodb_resource=mock_dynamodb)
+    now = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
+    future = now + timedelta(hours=4)
+
+    # Unit test compute_date_status
+    ds_reported = compute_date_status(DonationStatus.REPORTED, now)
+    assert ds_reported == "2026-09-05#reported"
+    ds_matched = compute_date_status(DonationStatus.MATCHED, now)
+    assert ds_matched == "2026-09-05#matched"
+    ds_assigned = compute_date_status(DonationStatus.ASSIGNED, now)
+    assert ds_assigned == "2026-09-05#assigned"
+    ds_escalated = compute_date_status(DonationStatus.ESCALATED, now)
+    assert ds_escalated == "2026-09-05#escalated"
+
+    donation = Donation(
+        donation_id="don-date-status-test",
+        donor_id="donor-300",
+        donor_name="Central Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Broadway",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=35.0,
+        ready_by=future,
+        perishability_hours=12.0,
+        service_region="metro-core",
+    )
+    repo.create_donation(donation)
+    fetched = repo.get_donation("don-date-status-test")
+    assert fetched is not None
+    assert fetched.date_status is not None
+    assert fetched.date_status.endswith("#reported")
+
+    # Claim donation -> transitions to matched
+    assert repo.claim_donation("don-date-status-test", "rec-101") is True
+    claimed = repo.get_donation("don-date-status-test")
+    assert claimed is not None
+    assert claimed.date_status is not None
+    assert claimed.date_status.endswith("#matched")
+
+    # Assign volunteer -> transitions to assigned
+    assert repo.assign_volunteer("don-date-status-test", "vol-202") is True
+    assigned = repo.get_donation("don-date-status-test")
+    assert assigned is not None
+    assert assigned.date_status is not None
+    assert assigned.date_status.endswith("#assigned")
+
+
+def test_donations_repo_escalate_donation_transitions_and_guards(
+    mock_dynamodb: MockDynamoDBResource,
+) -> None:
+    """Verify escalate_donation transitions on REPORTED and rejects post-dispatch."""
+    repo = DonationsRepository(dynamodb_resource=mock_dynamodb)
+    now = datetime(2026, 9, 5, 14, 0, 0, tzinfo=timezone.utc)
+    future = now + timedelta(hours=3)
+
+    # 1. Escalate from REPORTED
+    donation = Donation(
+        donation_id="don-esc-repo-01",
+        donor_id="donor-400",
+        donor_name="Fresh Market",
+        donor_phone="+12125550199",
+        donor_address="400 Broad St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.PRODUCE,
+        quantity_kg=40.0,
+        ready_by=future,
+        perishability_hours=8.0,
+        service_region="metro-core",
+        status=DonationStatus.REPORTED,
+    )
+    repo.create_donation(donation)
+
+    assert repo.escalate_donation(
+        "don-esc-repo-01", EscalationReason.NO_MATCH_WITHIN_WINDOW
+    ) is True
+    escalated = repo.get_donation("don-esc-repo-01")
+    assert escalated is not None
+    assert escalated.status == DonationStatus.ESCALATED
+    assert escalated.date_status is not None
+    assert escalated.date_status.endswith("#escalated")
+
+    # 2. Idempotent re-escalation is a clean no-op
+    assert repo.escalate_donation(
+        "don-esc-repo-01", EscalationReason.NO_MATCH_WITHIN_WINDOW
+    ) is True
+
+    # 3. Post-dispatch rejection: donation in ASSIGNED state must reject escalation
+    donation_assigned = Donation(
+        donation_id="don-esc-repo-02",
+        donor_id="donor-401",
+        donor_name="Fresh Market",
+        donor_phone="+12125550199",
+        donor_address="400 Broad St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.PRODUCE,
+        quantity_kg=30.0,
+        ready_by=future,
+        perishability_hours=8.0,
+        service_region="metro-core",
+        status=DonationStatus.ASSIGNED,
+    )
+    repo.create_donation(donation_assigned)
+
+    conflict_pattern = "post-dispatch state assigned"
+    with pytest.raises(DonationStateConflictError, match=conflict_pattern):
+        repo.escalate_donation(
+            "don-esc-repo-02", EscalationReason.FOOD_SAFETY_THRESHOLD_BREACH
+        )
+
+
+def test_donations_repo_get_authoritative_daily_summary_gsi() -> None:
+    """Verify get_authoritative_daily_summary queries GSI and aggregates metrics."""
+    mock_table = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.Table.return_value = mock_table
+    repo = DonationsRepository(dynamodb_resource=mock_resource)
+
+    # Setup mock items returned by region-date-status-index GSI query
+    mock_table.query.return_value = {
+        "Items": [
+            {
+                "donation_id": "don-1",
+                "service_region": "metro-core",
+                "status": "assigned",
+                "quantity_kg": 50.0,
+                "matched_recipient_id": "rec-1",
+                "date_status": "2026-09-05#assigned",
+            },
+            {
+                "donation_id": "don-2",
+                "service_region": "metro-core",
+                "status": "delivered",
+                "quantity_kg": 30.0,
+                "matched_recipient_id": "rec-2",
+                "date_status": "2026-09-05#delivered",
+            },
+            {
+                "donation_id": "don-3",
+                "service_region": "metro-core",
+                "status": "closed",
+                "quantity_kg": 20.0,
+                "matched_recipient_id": "rec-1",
+                "date_status": "2026-09-05#closed",
+            },
+            {
+                "donation_id": "don-4",
+                "service_region": "metro-core",
+                # Excluded from committed totals:
+                "status": "reported",
+                "quantity_kg": 15.0,
+                "date_status": "2026-09-05#reported",
+            },
+        ]
+    }
+
+    summary = repo.get_authoritative_daily_summary("metro-core", "2026-09-05")
+
+    assert summary.service_region == "metro-core"
+    assert summary.date_str == "2026-09-05"
+    assert summary.total_kg_routed == 100.0  # 50 + 30 + 20
+    assert summary.meals_equivalent == 200  # 100.0 * 2.0 conversion factor
+    assert summary.organizations_served == 2  # rec-1 and rec-2
+    assert summary.donations_count == 3  # don-1, don-2, don-3
+
+    # Assert GSI IndexName was correctly targeted
+    mock_table.query.assert_called_once()
+    _, kwargs = mock_table.query.call_args
+    assert kwargs.get("IndexName") == "region-date-status-index"
+
