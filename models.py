@@ -101,6 +101,20 @@ class Donation(BaseModel):
         return target
 
 
+class RecipientStatus(str, Enum):
+    """Operational status of a recipient organization."""
+
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+
+
+class VolunteerStatus(str, Enum):
+    """Availability status of a transit volunteer."""
+
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
 class Recipient(BaseModel):
     """Non-profit or community recipient receiving surplus food."""
 
@@ -117,11 +131,16 @@ class Recipient(BaseModel):
     capacity_kg_remaining: float = Field(..., ge=0.0, le=10000.0)
     dietary_requirements: list[str] = Field(default_factory=list)
     dietary_exclusions: list[str] = Field(default_factory=list)
-    is_active: bool = True
+    status: RecipientStatus = RecipientStatus.ACTIVE
     service_region: str = Field(..., min_length=1, max_length=64)
     last_checkin_time: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
+
+    @property
+    def is_active(self) -> bool:
+        """Boolean indicator of recipient active availability."""
+        return self.status == RecipientStatus.ACTIVE
 
     @field_validator("contact_phone")
     @classmethod
@@ -143,10 +162,15 @@ class Volunteer(BaseModel):
     phone: str = Field(..., min_length=7, max_length=32)
     address: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
     coordinates: Coordinates
-    is_available: bool = True
+    status: VolunteerStatus = VolunteerStatus.AVAILABLE
     max_capacity_kg: float = Field(..., gt=0.0, le=2000.0)
     vehicle_type: str = Field(..., min_length=1, max_length=32)
     service_region: str = Field(..., min_length=1, max_length=64)
+
+    @property
+    def is_available(self) -> bool:
+        """Boolean indicator of volunteer transit availability."""
+        return self.status == VolunteerStatus.AVAILABLE
 
     @field_validator("phone")
     @classmethod
