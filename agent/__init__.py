@@ -1,1 +1,1 @@
-"""Agent orchestration package for Food Rescue Coordination Agent."""
+"""Agent orchestration and decision guardrail components."""
