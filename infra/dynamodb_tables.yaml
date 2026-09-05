@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "DynamoDB tables and least-privilege IAM policies for Food Rescue Coordination Agent"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: "dev"
+    Description: "Deployment environment identifier (e.g. dev, staging, prod)"
+
+Resources:
+  # 1. Donations Table
+  DonationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "frca-donations-${EnvironmentName}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: donation_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: ready_by
+          AttributeType: S
+      KeySchema:
+        - AttributeName: donation_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: status-ready_by-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: ready_by
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # 2. Recipients Table
+  RecipientsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "frca-recipients-${EnvironmentName}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: recipient_id
+          AttributeType: S
+        - AttributeName: service_region
+          AttributeType: S
+        - AttributeName: is_active
+          AttributeType: N
+      KeySchema:
+        - AttributeName: recipient_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: region-status-index
+          KeySchema:
+            - AttributeName: service_region
+              KeyType: HASH
+            - AttributeName: is_active
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # 3. Volunteers Table
+  VolunteersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "frca-volunteers-${EnvironmentName}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: volunteer_id
+          AttributeType: S
+        - AttributeName: service_region
+          AttributeType: S
+        - AttributeName: is_available
+          AttributeType: N
+      KeySchema:
+        - AttributeName: volunteer_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: region-status-index
+          KeySchema:
+            - AttributeName: service_region
+              KeyType: HASH
+            - AttributeName: is_available
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # 4. Matches and Audit Log Table
+  MatchesAuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "frca-matches-audit-${EnvironmentName}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: donation_id
+          AttributeType: S
+        - AttributeName: event_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: donation_id
+          KeyType: HASH
+        - AttributeName: event_id
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # Least-Privilege IAM Execution Role for Data Layer
+  DataLayerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "frca-data-layer-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBLeastPrivilegeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt DonationsTable.Arn
+                  - !Sub "${DonationsTable.Arn}/index/*"
+                  - !GetAtt RecipientsTable.Arn
+                  - !Sub "${RecipientsTable.Arn}/index/*"
+                  - !GetAtt VolunteersTable.Arn
+                  - !Sub "${VolunteersTable.Arn}/index/*"
+                  - !GetAtt MatchesAuditTable.Arn
+                  - !Sub "${MatchesAuditTable.Arn}/index/*"
+
+Outputs:
+  DonationsTableName:
+    Description: "Name of the Donations DynamoDB table"
+    Value: !Ref DonationsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-DonationsTableName"
+
+  RecipientsTableName:
+    Description: "Name of the Recipients DynamoDB table"
+    Value: !Ref RecipientsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-RecipientsTableName"
+
+  VolunteersTableName:
+    Description: "Name of the Volunteers DynamoDB table"
+    Value: !Ref VolunteersTable
+    Export:
+      Name: !Sub "${AWS::StackName}-VolunteersTableName"
+
+  MatchesAuditTableName:
+    Description: "Name of the Matches and Audit DynamoDB table"
+    Value: !Ref MatchesAuditTable
+    Export:
+      Name: !Sub "${AWS::StackName}-MatchesAuditTableName"
+
+  DataLayerExecutionRoleArn:
+    Description: "ARN of the least-privilege data access role"
+    Value: !GetAtt DataLayerExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-DataLayerExecutionRoleArn"
