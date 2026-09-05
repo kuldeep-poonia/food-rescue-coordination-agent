@@ -71,7 +71,6 @@ Resources:
                   - dynamodb:DeleteItem
                   - dynamodb:Query
                   - dynamodb:Scan
-                  - dynamodb:TransactWriteItems
                 Resource:
                   - !GetAtt SessionsMemoryTable.Arn
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-donations-${EnvironmentName}"
