@@ -383,7 +383,7 @@ class MemoryEntry(BaseModel):
 class AgentCoreRuntimeEvent(BaseModel):
     """Standard AWS Bedrock AgentCore Runtime invocation event."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     message_version: str = Field(default="1.0", alias="messageVersion")
     agent: dict[str, Any] = Field(default_factory=dict)
@@ -404,7 +404,7 @@ class AgentCoreRuntimeEvent(BaseModel):
 class AgentCoreRuntimeResponse(BaseModel):
     """Standard AWS Bedrock AgentCore Runtime action group response."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     message_version: str = Field(default="1.0", alias="messageVersion")
     response: dict[str, Any]
