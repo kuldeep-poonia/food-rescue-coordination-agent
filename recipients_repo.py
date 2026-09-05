@@ -76,11 +76,18 @@ class RecipientsRepository:
         )
 
     @with_dynamodb_retry
-    def get_recipient(self, recipient_id: str) -> Recipient | None:
+    def get_recipient(
+        self, recipient_id: str, consistent_read: bool = True
+    ) -> Recipient | None:
         """Retrieve a recipient record by its unique identifier.
+
+        Policy decision: Recipient capacity checks require strongly consistent
+        reads (consistent_read=True) to prevent over-allocation during matches.
+        Eventual consistency is reserved for analytical dashboard queries.
 
         Args:
             recipient_id: The unique recipient identifier.
+            consistent_read: Enforce strongly consistent read (default: True).
 
         Returns:
             The parsed Recipient model if found, otherwise None.
@@ -90,7 +97,7 @@ class RecipientsRepository:
         """
         response = self._table.get_item(
             Key={"recipient_id": recipient_id},
-            ConsistentRead=True,
+            ConsistentRead=consistent_read,
         )
         item = response.get("Item")
         if not item:
@@ -99,7 +106,9 @@ class RecipientsRepository:
         return Recipient.model_validate(item)
 
     @with_dynamodb_retry
-    def query_active_recipients_by_region(self, service_region: str) -> list[Recipient]:
+    def query_active_recipients_by_region(
+        self, service_region: str
+    ) -> list[Recipient]:
         """Query all active recipients in a designated service region.
 
         Args:
