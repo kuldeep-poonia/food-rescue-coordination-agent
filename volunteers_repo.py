@@ -75,11 +75,18 @@ class VolunteersRepository:
         )
 
     @with_dynamodb_retry
-    def get_volunteer(self, volunteer_id: str) -> Volunteer | None:
+    def get_volunteer(
+        self, volunteer_id: str, consistent_read: bool = True
+    ) -> Volunteer | None:
         """Retrieve a volunteer record by identifier.
+
+        Policy decision: Volunteer availability checks require strongly
+        consistent reads (consistent_read=True) to prevent double assignment.
+        Eventual consistency is reserved for analytical dashboard queries.
 
         Args:
             volunteer_id: The unique volunteer identifier.
+            consistent_read: Enforce strongly consistent read (default: True).
 
         Returns:
             The parsed Volunteer model if found, otherwise None.
@@ -89,7 +96,7 @@ class VolunteersRepository:
         """
         response = self._table.get_item(
             Key={"volunteer_id": volunteer_id},
-            ConsistentRead=True,
+            ConsistentRead=consistent_read,
         )
         item = response.get("Item")
         if not item:
