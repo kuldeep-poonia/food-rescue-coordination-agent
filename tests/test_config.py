@@ -70,8 +70,9 @@ def test_configuration_environment_overrides() -> None:
 def test_configuration_immutability() -> None:
     """Verify AppConfig instance is frozen against runtime mutations."""
     cfg = load_app_configuration()
+    target_field: str = "aws_region"
     with pytest.raises(FrozenInstanceError):
-        cfg.aws_region = "invalid-mutation"
+        setattr(cfg, target_field, "invalid-mutation")
 
 
 def test_operational_threshold_constants() -> None:
