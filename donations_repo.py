@@ -6,7 +6,7 @@ and updating surplus food donation records.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -21,6 +21,7 @@ from config import (
 from dynamodb_retry import with_dynamodb_retry
 from idempotency import build_idempotency_key
 from models import (
+    CoordinatorNotificationStatus,
     Donation,
     DonationStatus,
     EscalationReason,
@@ -912,7 +913,7 @@ class DonationsRepository:
                     "Key": target_key,
                     "UpdateExpression": (
                         "SET #st = :escalated_status, #er = :reason, "
-                        "#ua = :now, #ds = :date_status"
+                        "#ua = :now, #ds = :date_status, #cns = :pending_status"
                     ),
                     "ConditionExpression": (
                         "attribute_exists(donation_id) AND #st = :reported_status"
@@ -922,6 +923,7 @@ class DonationsRepository:
                         "#er": "escalation_reason",
                         "#ua": "updated_at",
                         "#ds": "date_status",
+                        "#cns": "coordinator_notification_status",
                     },
                     "ExpressionAttributeValues": {
                         ":escalated_status": {"S": DonationStatus.ESCALATED.value},
@@ -929,6 +931,9 @@ class DonationsRepository:
                         ":reason": {"S": reason.value},
                         ":now": {"S": now_iso},
                         ":date_status": {"S": date_status},
+                        ":pending_status": {
+                            "S": CoordinatorNotificationStatus.PENDING.value
+                        },
                     },
                 }
             },
@@ -946,12 +951,16 @@ class DonationsRepository:
                             "M": {
                                 "reason": {"S": reason.value},
                                 "escalated_at": {"S": now_iso},
+                                "notification_status": {
+                                    "S": CoordinatorNotificationStatus.PENDING.value
+                                },
                             }
                         },
                     },
                     "ConditionExpression": "attribute_not_exists(idempotency_key)",
                 }
             },
+
         ]
 
         try:
@@ -990,3 +999,385 @@ class DonationsRepository:
                 )
                 return False
             raise
+
+    @with_dynamodb_retry
+    def claim_coordinator_notification(
+        self,
+        donation_id: str,
+        claim_id: str,
+        claim_time: datetime | None = None,
+        lease_seconds: int | None = None,
+    ) -> bool:
+        """Atomically claim the coordinator notification lease for a donation.
+
+        Enforces strict pre-dispatch mutual exclusion using a DynamoDB
+        conditional update:
+        - Condition passes if:
+          1. coordinator_notification_status == PENDING, OR
+          2. coordinator_notification_status == CLAIMED AND
+             coordinator_notification_claimed_at <= lease_threshold
+        - If condition passes, sets status='CLAIMED', claimed_at=now,
+          claim_id=claim_id.
+        - If condition fails (another worker holds active claim, or already
+          DELIVERED/FAILED), returns False cleanly as an idempotent safe NO-OP.
+
+        Args:
+            donation_id: Target donation identifier.
+            claim_id: Unique claim/worker attempt identifier.
+            claim_time: Optional datetime for deterministic testing.
+            lease_seconds: Optional lease duration in seconds (defaults from config).
+
+        Returns:
+            True if claim lease was acquired; False if not acquired (safe NO-OP).
+        """
+        now = claim_time or datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        effective_lease = (
+            lease_seconds
+            if lease_seconds is not None
+            else self._config.notification_claim_lease_seconds
+        )
+        expired_threshold_iso = (now - timedelta(seconds=effective_lease)).isoformat()
+
+        try:
+            self._table.update_item(
+                Key={"donation_id": donation_id},
+                UpdateExpression=(
+                    "SET #cns = :claimed_status, #ca = :now, "
+                    "#cid = :claim_id, #ua = :now"
+                ),
+                ConditionExpression=(
+                    "attribute_exists(donation_id) AND ("
+                    "#cns = :pending_status OR ("
+                    "#cns = :claimed_status AND attribute_exists(#ca) "
+                    "AND #ca <= :expired_threshold"
+                    "))"
+                ),
+                ExpressionAttributeNames={
+                    "#cns": "coordinator_notification_status",
+                    "#ca": "coordinator_notification_claimed_at",
+                    "#cid": "coordinator_notification_claim_id",
+                    "#ua": "updated_at",
+                },
+                ExpressionAttributeValues={
+                    ":claimed_status": CoordinatorNotificationStatus.CLAIMED.value,
+                    ":pending_status": CoordinatorNotificationStatus.PENDING.value,
+                    ":claim_id": claim_id,
+                    ":now": now_iso,
+                    ":expired_threshold": expired_threshold_iso,
+                },
+            )
+            LOGGER.info(
+                "Acquired coordinator notification claim for %s (claim_id: %s)",
+                donation_id,
+                claim_id,
+            )
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "ConditionalCheckFailedException":
+                LOGGER.info(
+                    "Coordinator notification claim rejected for donation %s "
+                    "(active claim held or already terminal); safe NO-OP",
+                    donation_id,
+                )
+                return False
+            raise
+
+    @with_dynamodb_retry
+    def mark_coordinator_notification_delivered(
+        self,
+        donation_id: str,
+        claim_id: str,
+        delivery_time: datetime | None = None,
+    ) -> bool:
+        """Atomically transition notification state from CLAIMED to DELIVERED.
+
+        Condition requires:
+        - attribute_exists(donation_id)
+        - coordinator_notification_status == CLAIMED
+        - coordinator_notification_claim_id == claim_id
+
+        Clears claim attributes (#ca, #cid) and sets status='DELIVERED'.
+
+        Args:
+            donation_id: Target donation identifier.
+            claim_id: Claim identifier matching the current active lease.
+            delivery_time: Optional datetime for deterministic updates.
+
+        Returns:
+            True if transitioned to DELIVERED; False if conditional check failed.
+        """
+        now = delivery_time or datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+
+        try:
+            self._table.update_item(
+                Key={"donation_id": donation_id},
+                UpdateExpression=(
+                    "SET #cns = :delivered_status, #ua = :now REMOVE #ca, #cid"
+                ),
+                ConditionExpression=(
+                    "attribute_exists(donation_id) AND "
+                    "#cns = :claimed_status AND #cid = :claim_id"
+                ),
+                ExpressionAttributeNames={
+                    "#cns": "coordinator_notification_status",
+                    "#cid": "coordinator_notification_claim_id",
+                    "#ca": "coordinator_notification_claimed_at",
+                    "#ua": "updated_at",
+                },
+                ExpressionAttributeValues={
+                    ":delivered_status": CoordinatorNotificationStatus.DELIVERED.value,
+                    ":claimed_status": CoordinatorNotificationStatus.CLAIMED.value,
+                    ":claim_id": claim_id,
+                    ":now": now_iso,
+                },
+            )
+            LOGGER.info(
+                "Marked coordinator notification DELIVERED for donation %s",
+                donation_id,
+            )
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "ConditionalCheckFailedException":
+                LOGGER.info(
+                    "Mark delivered condition failed for donation %s "
+                    "(claim_id mismatch or non-claimed state); safe NO-OP",
+                    donation_id,
+                )
+                return False
+            raise
+
+    @with_dynamodb_retry
+    def mark_coordinator_notification_failed(
+        self,
+        donation_id: str,
+        claim_id: str,
+        error_detail: str,
+        failure_time: datetime | None = None,
+    ) -> bool:
+        """Atomically transition notification state from CLAIMED to FAILED.
+
+        Used when delivery fails permanently (e.g. non-retryable 4xx client error).
+
+        Args:
+            donation_id: Target donation identifier.
+            claim_id: Claim identifier matching current active lease.
+            error_detail: Sanitized error description (no PII or raw dumps).
+            failure_time: Optional datetime for deterministic updates.
+
+        Returns:
+            True if transitioned to FAILED; False if conditional check failed.
+        """
+        now = failure_time or datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+
+        try:
+            self._table.update_item(
+                Key={"donation_id": donation_id},
+                UpdateExpression=(
+                    "SET #cns = :failed_status, #ua = :now, "
+                    "#err = :error_detail REMOVE #ca, #cid"
+                ),
+                ConditionExpression=(
+                    "attribute_exists(donation_id) AND "
+                    "#cns = :claimed_status AND #cid = :claim_id"
+                ),
+                ExpressionAttributeNames={
+                    "#cns": "coordinator_notification_status",
+                    "#cid": "coordinator_notification_claim_id",
+                    "#ca": "coordinator_notification_claimed_at",
+                    "#err": "coordinator_notification_error",
+                    "#ua": "updated_at",
+                },
+                ExpressionAttributeValues={
+                    ":failed_status": CoordinatorNotificationStatus.FAILED.value,
+                    ":claimed_status": CoordinatorNotificationStatus.CLAIMED.value,
+                    ":claim_id": claim_id,
+                    ":error_detail": error_detail,
+                    ":now": now_iso,
+                },
+            )
+            LOGGER.warning(
+                "Marked coordinator notification FAILED for donation %s: %s",
+                donation_id,
+                error_detail,
+            )
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "ConditionalCheckFailedException":
+                LOGGER.info(
+                    "Mark failed condition failed for donation %s; safe NO-OP",
+                    donation_id,
+                )
+                return False
+            raise
+
+    @with_dynamodb_retry
+    def release_coordinator_notification_claim(
+        self,
+        donation_id: str,
+        claim_id: str,
+    ) -> bool:
+        """Release an active notification claim back to PENDING.
+
+        Only invoked on clean recovery paths when a failure is definitively
+        known to have occurred before downstream transmission was accepted.
+        Resets status to PENDING and removes claim identifiers.
+
+        Args:
+            donation_id: Target donation identifier.
+            claim_id: Claim identifier matching current active lease.
+
+        Returns:
+            True if claim was released; False if conditional check failed.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            self._table.update_item(
+                Key={"donation_id": donation_id},
+                UpdateExpression=(
+                    "SET #cns = :pending_status, #ua = :now REMOVE #ca, #cid"
+                ),
+                ConditionExpression=(
+                    "attribute_exists(donation_id) AND "
+                    "#cns = :claimed_status AND #cid = :claim_id"
+                ),
+                ExpressionAttributeNames={
+                    "#cns": "coordinator_notification_status",
+                    "#cid": "coordinator_notification_claim_id",
+                    "#ca": "coordinator_notification_claimed_at",
+                    "#ua": "updated_at",
+                },
+                ExpressionAttributeValues={
+                    ":pending_status": CoordinatorNotificationStatus.PENDING.value,
+                    ":claimed_status": CoordinatorNotificationStatus.CLAIMED.value,
+                    ":claim_id": claim_id,
+                    ":now": now_iso,
+                },
+            )
+            LOGGER.info(
+                "Released notification claim for %s back to PENDING",
+                donation_id,
+            )
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "ConditionalCheckFailedException":
+                LOGGER.info(
+                    "Release claim condition failed for donation %s; safe NO-OP",
+                    donation_id,
+                )
+                return False
+            raise
+
+    @with_dynamodb_retry
+    def query_pending_coordinator_notifications(
+        self,
+        service_region: str | None = None,
+        limit: int | None = None,
+        max_evaluated_items: int | None = None,
+    ) -> list[Donation]:
+        """Query donations in ESCALATED status needing coordinator notification.
+
+        Retrieves records whose notification status is either PENDING or CLAIMED
+        (allowing expired leases to be discovered and reclaimed).
+        Queries GSI 'status-ready_by-index' with status='escalated' and filters on
+        coordinator_notification_status in ('PENDING', 'CLAIMED').
+        Falls back to bounded pagination scan if GSI is missing/invalid.
+
+        Args:
+            service_region: Optional regional filter.
+            limit: Maximum items to return.
+            max_evaluated_items: Maximum items to evaluate in fallback scan.
+
+        Returns:
+            List of parsed Donation models eligible for notification recovery.
+        """
+        effective_limit = limit or self._config.max_unmatched_query_limit
+        effective_max_evaluated = (
+            max_evaluated_items or self._config.max_fallback_scan_evaluated_items
+        )
+        canonical_status = DonationStatus.ESCALATED.value
+        eligible_statuses = {
+            CoordinatorNotificationStatus.PENDING.value,
+            CoordinatorNotificationStatus.CLAIMED.value,
+        }
+
+        try:
+            from boto3.dynamodb.conditions import Attr
+
+            filter_expr = Attr("coordinator_notification_status").is_in(
+                list(eligible_statuses)
+            )
+            if service_region:
+                filter_expr = filter_expr & Attr("service_region").eq(service_region)
+
+            response = self._table.query(
+                IndexName="status-ready_by-index",
+                KeyConditionExpression=Key("status").eq(canonical_status),
+                FilterExpression=filter_expr,
+                Limit=effective_limit,
+            )
+            raw_items = response.get("Items", [])
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "ValidationException":
+                LOGGER.warning(
+                    "GSI status-ready_by-index unavailable; falling back to scan "
+                    "for pending coordinator alerts",
+                    extra={"error": code},
+                )
+
+                from boto3.dynamodb.conditions import Attr
+
+                scan_filter = Attr("status").eq(canonical_status) & Attr(
+                    "coordinator_notification_status"
+                ).is_in(list(eligible_statuses))
+                if service_region:
+                    scan_filter = scan_filter & Attr("service_region").eq(
+                        service_region
+                    )
+
+                raw_items = []
+                evaluated_count = 0
+                last_key = None
+
+                while (
+                    len(raw_items) < effective_limit
+                    and evaluated_count < effective_max_evaluated
+                ):
+                    scan_kwargs: dict[str, Any] = {
+                        "FilterExpression": scan_filter,
+                        "Limit": min(50, effective_limit - len(raw_items)),
+                    }
+                    if last_key:
+                        scan_kwargs["ExclusiveStartKey"] = last_key
+
+                    scan_resp = self._table.scan(**scan_kwargs)
+                    page_items = scan_resp.get("Items", [])
+                    raw_items.extend(page_items)
+                    evaluated_count += scan_resp.get("ScannedCount", len(page_items))
+                    last_key = scan_resp.get("LastEvaluatedKey")
+                    if not last_key:
+                        break
+            else:
+                raise
+
+        # Post-filter in Python for exact matching (defends against basic mocks)
+        results: list[Donation] = []
+        for item in raw_items:
+            cns = item.get("coordinator_notification_status")
+            if cns in eligible_statuses:
+                if service_region and item.get("service_region") != service_region:
+                    continue
+                results.append(Donation.model_validate(item))
+                if len(results) >= effective_limit:
+                    break
+
+        return results
+
+
