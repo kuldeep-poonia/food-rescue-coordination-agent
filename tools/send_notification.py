@@ -171,6 +171,28 @@ def is_retryable_sns_error(exc: Exception) -> bool:
     return isinstance(exc, (TimeoutError, ConnectionError, BotoCoreError))
 
 
+def is_ambiguous_transport_error(exc: Exception) -> bool:
+    """Classify whether an exception indicates an ambiguous external transport outcome.
+
+    Occurs when the request was transmitted or socket connection initiated,
+    but response was not received or connection timed out, so external delivery
+    status cannot be definitively known.
+    """
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    exc_name = exc.__class__.__name__
+    if exc_name in (
+        "ConnectTimeoutError",
+        "ReadTimeoutError",
+        "EndpointConnectionError",
+        "SocketTimeout",
+    ):
+        return True
+    msg = str(exc).lower()
+    return "timeout" in msg or "timed out" in msg or "connection reset" in msg
+
+
+
 def sanitize_template_variable(value: Any) -> str:
     """Strip HTML, script tags, template expressions, and control characters.
 
@@ -327,7 +349,9 @@ def send_notification(
                     recipient_type=recipient_type.value,
                     masked_destination=masked_dest,
                     safe_error_detail=safe_detail,
+                    is_ambiguous=is_ambiguous_transport_error(exc),
                 ) from None
+
 
     return NotificationMessage(
         recipient_type=recipient_type,
