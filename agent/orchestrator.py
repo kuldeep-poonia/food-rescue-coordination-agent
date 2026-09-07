@@ -17,6 +17,7 @@ from donations_repo import (
 )
 from models import (
     AuditEvent,
+    CoordinatorNotificationStatus,
     Donation,
     DonationClassification,
     DonationStatus,
@@ -865,6 +866,137 @@ class StrandsOrchestrator:
             correlation_id=corr_id,
         )
 
+    def _dispatch_coordinator_escalation_alert(
+        self,
+        donation: Donation,
+        correlation_id: str,
+        reason: str = EscalationReason.NO_MATCH_WITHIN_WINDOW.value,
+        summary: str | None = None,
+    ) -> bool:
+        """Atomically claim notification lease and dispatch coordinator alert.
+
+        Enforces pre-dispatch mutual exclusion:
+        1. If already DELIVERED, returns True as a safe NO-OP.
+        2. Atomically acquires DynamoDB claim lease (PENDING -> CLAIMED).
+           If another worker holds active claim or state is terminal, returns
+           False cleanly without calling external SNS publish (zero duplicate
+           concurrent dispatch).
+        3. Invokes SNS publish.
+        4. On success: transitions CLAIMED -> DELIVERED and records audit event.
+        5. On permanent failure (4xx non-retryable): transitions CLAIMED -> FAILED
+           and records audit event.
+        6. On ambiguous transport failure (socket timeout / connection failure):
+           Preserves CLAIMED state and allows the lease to expire naturally
+           for subsequent at-least-once reconciliation recovery.
+
+        Args:
+            donation: Target escalated Donation model.
+            correlation_id: Unique trace identifier.
+            reason: Escalation reason string.
+            summary: Optional alert description.
+
+        Returns:
+            True if alert dispatched or already delivered; False if claim not
+            acquired or delivery failed.
+        """
+        if (
+            donation.coordinator_notification_status
+            == CoordinatorNotificationStatus.DELIVERED
+        ):
+            LOGGER.info(
+                "Coordinator alert already DELIVERED for %s; safe NO-OP",
+                donation.donation_id,
+                extra={"correlation_id": correlation_id},
+            )
+            return True
+
+        claim_id = f"clm-{uuid.uuid4().hex[:12]}"
+        acquired = self._donations_repo.claim_coordinator_notification(
+            donation_id=donation.donation_id,
+            claim_id=claim_id,
+        )
+        if not acquired:
+            LOGGER.info(
+                "Could not acquire coordinator notification claim for %s; "
+                "active lease held or already terminal (safe NO-OP)",
+                donation.donation_id,
+                extra={"correlation_id": correlation_id},
+            )
+            return False
+
+        alert_summary = summary or (
+            f"Donation {donation.donation_id} exceeded ready_by window "
+            f"({donation.ready_by.isoformat()}) without matching"
+        )
+
+        try:
+            send_notification(
+                recipient_type=NotificationRecipientType.COORDINATOR,
+                destination="coordinator-alert",
+                template_id="COORDINATOR_ESCALATION_V1",
+                parameters={
+                    "donation_id": donation.donation_id,
+                    "escalation_reason": reason,
+                    "summary": alert_summary,
+                },
+                correlation_id=correlation_id,
+                sns_client=self._sns_client,
+            )
+            self._donations_repo.mark_coordinator_notification_delivered(
+                donation_id=donation.donation_id,
+                claim_id=claim_id,
+            )
+            audit_event = AuditEvent(
+                event_id=f"evt-{uuid.uuid4().hex[:12]}",
+                donation_id=donation.donation_id,
+                action="COORDINATOR_ALERT_DELIVERED",
+                actor="eventbridge_time_window_monitor",
+                idempotency_key=f"{donation.donation_id}:coordinator_alert_delivered",
+                details={
+                    "correlation_id": correlation_id,
+                    "destination": "coordinator-alert",
+                    "claim_id": claim_id,
+                },
+            )
+            self._audit_repo.record_audit_event(audit_event)
+            return True
+        except NotificationDeliveryError as exc:
+            if exc.is_ambiguous:
+                LOGGER.warning(
+                    "Ambiguous transport outcome for %s alert: %s; "
+                    "preserving CLAIMED state until lease expires",
+                    donation.donation_id,
+                    exc.safe_error_detail,
+                    extra={"correlation_id": correlation_id},
+                )
+                return False
+
+            LOGGER.error(
+                "Permanent failure delivering coordinator alert for %s: %s",
+                donation.donation_id,
+                exc.safe_error_detail,
+                extra={"correlation_id": correlation_id},
+            )
+            self._donations_repo.mark_coordinator_notification_failed(
+                donation_id=donation.donation_id,
+                claim_id=claim_id,
+                error_detail=exc.safe_error_detail,
+            )
+            fail_audit = AuditEvent(
+                event_id=f"evt-{uuid.uuid4().hex[:12]}",
+                donation_id=donation.donation_id,
+                action="COORDINATOR_ALERT_FAILED",
+                actor="eventbridge_time_window_monitor",
+                idempotency_key=f"{donation.donation_id}:coordinator_alert_failed",
+                details={
+                    "correlation_id": correlation_id,
+                    "safe_error_detail": exc.safe_error_detail,
+                    "claim_id": claim_id,
+                },
+            )
+            self._audit_repo.record_audit_event(fail_audit)
+            return False
+
     def reconcile_time_window_donations(
         self,
         service_region: str = "metro-core",
@@ -893,6 +1025,21 @@ class StrandsOrchestrator:
         now = current_time or datetime.now(timezone.utc)
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
+
+        # Step 0: Outbox Recovery - discover and recover any un-dispatched alerts
+        recovered_count = 0
+        pending_donations = (
+            self._donations_repo.query_pending_coordinator_notifications(
+                service_region=service_region
+            )
+        )
+        for p_don in pending_donations:
+            p_corr_id = f"sched-recover-{p_don.donation_id}"
+            dispatched = self._dispatch_coordinator_escalation_alert(
+                p_don, correlation_id=p_corr_id
+            )
+            if dispatched:
+                recovered_count += 1
 
         unmatched = self._donations_repo.query_unmatched_donations_by_region(
             service_region=service_region
@@ -935,32 +1082,11 @@ class StrandsOrchestrator:
                         now.isoformat(),
                         extra={"correlation_id": corr_id},
                     )
-                    try:
-                        send_notification(
-                            recipient_type=NotificationRecipientType.COORDINATOR,
-                            destination="coordinator-alert",
-                            template_id="COORDINATOR_ESCALATION_V1",
-                            parameters={
-                                "donation_id": donation.donation_id,
-                                "escalation_reason": (
-                                    EscalationReason.NO_MATCH_WITHIN_WINDOW.value
-                                ),
-                                "summary": (
-                                    f"Donation {donation.donation_id} exceeded "
-                                    f"ready_by window ({ready_by.isoformat()}) "
-                                    f"without matching"
-                                ),
-                            },
-                            correlation_id=corr_id,
-                            sns_client=self._sns_client,
-                        )
-                    except NotificationDeliveryError as exc:
-                        LOGGER.error(
-                            "Failed to deliver missed window alert for %s: %s",
-                            donation.donation_id,
-                            exc.safe_error_detail,
-                            extra={"correlation_id": corr_id},
-                        )
+                    self._dispatch_coordinator_escalation_alert(
+                        donation,
+                        correlation_id=corr_id,
+                        reason=EscalationReason.NO_MATCH_WITHIN_WINDOW.value,
+                    )
                 else:
                     already_escalated_count += 1
 
@@ -990,6 +1116,8 @@ class StrandsOrchestrator:
             "evaluated_count": len(unmatched),
             "escalated_count": escalated_count,
             "already_escalated_count": already_escalated_count,
+            "recovered_notifications_count": recovered_count,
             "coordinated_count": coordinated_count,
             "untouched_count": untouched_count,
         }
+
