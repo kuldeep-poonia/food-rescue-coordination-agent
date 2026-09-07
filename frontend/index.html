@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Surplus Router: Autonomous food rescue coordination agent matching surplus food to local community partners and shelters with transparent scoring and zero-leak privacy.">
+  <title>Surplus Router — Autonomous Food Rescue Coordination Agent</title>
+  <!-- Google Fonts: Inter & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Global Application Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="logo-group">
+        <span class="logo-icon" aria-hidden="true">🌱</span>
+        <div class="logo-text">
+          <span class="logo-title">Surplus Router</span>
+          <span class="logo-badge">Autonomous AgentCore</span>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs with Accessible Roles -->
+      <nav class="role-nav" aria-label="Role Navigation">
+        <button id="nav-tab-donor" class="nav-btn active" data-tab="donor" aria-selected="true" role="tab">
+          <span class="nav-icon">📦</span> Donor Portal
+        </button>
+        <button id="nav-tab-recipient" class="nav-btn" data-tab="recipient" aria-selected="false" role="tab">
+          <span class="nav-icon">🏢</span> Recipient Partner
+        </button>
+        <button id="nav-tab-volunteer" class="nav-btn" data-tab="volunteer" aria-selected="false" role="tab">
+          <span class="nav-icon">🚲</span> Transit Volunteer
+        </button>
+        <button id="nav-tab-coordinator" class="nav-btn" data-tab="coordinator" aria-selected="false" role="tab">
+          <span class="nav-icon">🛡️</span> Coordinator <span class="lock-indicator">🔒</span>
+        </button>
+        <button id="nav-tab-impact" class="nav-btn" data-tab="impact" aria-selected="false" role="tab">
+          <span class="nav-icon">📊</span> Impact Metrics
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="app-main">
+    <div class="main-container">
+
+      <!-- ================================================================= -->
+      <!-- 1. DONOR PORTAL TAB                                               -->
+      <!-- ================================================================= -->
+      <section id="tab-panel-donor" class="tab-panel active" role="tabpanel" aria-labelledby="nav-tab-donor">
+        <div class="panel-header">
+          <h1>Report Surplus Food Donation</h1>
+          <p class="panel-subtitle">Notify the autonomous coordination network of edible surplus food for rapid zero-waste redistribution.</p>
+        </div>
+
+        <div class="grid-layout grid-2-col">
+          <!-- Report Form Card -->
+          <article class="glass-card">
+            <h2 class="card-title">New Donation Report</h2>
+            <form id="donor-report-form" class="standard-form" novalidate>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="donor-input-name">Donor Organization *</label>
+                  <input type="text" id="donor-input-name" required placeholder="e.g. Green Bakery & Deli" maxlength="256">
+                </div>
+                <div class="form-group">
+                  <label for="donor-input-id">Donor Identifier *</label>
+                  <input type="text" id="donor-input-id" required placeholder="e.g. donor-kitchen-01" maxlength="64">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="donor-input-phone">Contact Phone (E.164) *</label>
+                  <input type="tel" id="donor-input-phone" required placeholder="+12125550199" pattern="^\+?[1-9]\d{6,14}$">
+                </div>
+                <div class="form-group">
+                  <label for="donor-select-category">Food Category *</label>
+                  <select id="donor-select-category" required>
+                    <option value="prepared_meals">Prepared Meals (Hot/Chilled)</option>
+                    <option value="produce">Fresh Produce (Fruits/Veg)</option>
+                    <option value="bakery">Bakery & Bread</option>
+                    <option value="dairy">Dairy & Refrigerated</option>
+                    <option value="dry_goods">Dry Goods & Pantry</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="donor-input-quantity">Quantity (kg) *</label>
+                  <input type="number" id="donor-input-quantity" required min="0.5" max="5000" step="0.5" placeholder="25.0">
+                </div>
+                <div class="form-group">
+                  <label for="donor-input-perishability">Perishability (Safe Hours) *</label>
+                  <input type="number" id="donor-input-perishability" required min="1.0" max="168.0" step="0.5" placeholder="4.0">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="donor-input-ready-by">Ready for Pickup By *</label>
+                <input type="datetime-local" id="donor-input-ready-by" required>
+              </div>
+
+              <div class="form-group">
+                <label for="donor-input-address">Pickup Street Address *</label>
+                <input type="text" id="donor-input-address" required placeholder="100 Main St, New York, NY" maxlength="256">
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="donor-input-lat">Latitude *</label>
+                  <input type="number" id="donor-input-lat" required step="0.000001" placeholder="40.7128">
+                </div>
+                <div class="form-group">
+                  <label for="donor-input-lon">Longitude *</label>
+                  <input type="number" id="donor-input-lon" required step="0.000001" placeholder="-74.0060">
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" id="donor-btn-submit" class="btn btn-primary">
+                  <span class="btn-text">Submit Donation & Coordinate</span>
+                  <span class="btn-spinner" aria-hidden="true"></span>
+                </button>
+              </div>
+              <div id="donor-form-status" class="alert-message hidden" role="alert"></div>
+            </form>
+          </article>
+
+          <!-- Tracking & Live Lifecycle Card -->
+          <article class="glass-card">
+            <h2 class="card-title">Donation Status Lookup (Zero-IDOR)</h2>
+            <p class="card-desc">Track real-time matching, volunteer assignment, and food-safety guardrail outcomes.</p>
+
+            <form id="donor-lookup-form" class="lookup-group">
+              <div class="form-group">
+                <label for="track-input-id">Donation ID</label>
+                <input type="text" id="track-input-id" placeholder="e.g. don-a1b2c3d4e5f6" required>
+              </div>
+              <div class="form-group">
+                <label for="track-input-token">Secure Tracking Token</label>
+                <input type="password" id="track-input-token" placeholder="Paste issued tracking token" required>
+              </div>
+              <button type="submit" id="track-btn-search" class="btn btn-secondary">Verify & Track</button>
+            </form>
+
+            <div id="donor-tracking-result" class="tracking-result-box hidden">
+              <div class="receipt-header">
+                <span class="receipt-label">Current Lifecycle State</span>
+                <span id="track-status-pill" class="status-pill status-reported">REPORTED</span>
+              </div>
+              <div class="receipt-details">
+                <div class="receipt-row">
+                  <span class="key">Donation ID:</span>
+                  <span id="track-res-id" class="val mono"></span>
+                </div>
+                <div class="receipt-row">
+                  <span class="key">Category & Weight:</span>
+                  <span id="track-res-cat-qty" class="val"></span>
+                </div>
+                <div class="receipt-row">
+                  <span class="key">Matched Partner:</span>
+                  <span id="track-res-recipient" class="val highlight"></span>
+                </div>
+                <div class="receipt-row">
+                  <span class="key">Assigned Volunteer:</span>
+                  <span id="track-res-volunteer" class="val highlight"></span>
+                </div>
+                <div class="receipt-row">
+                  <span class="key">Ready Window:</span>
+                  <span id="track-res-ready" class="val"></span>
+                </div>
+                <div id="track-escalation-row" class="receipt-row hidden alert-row">
+                  <span class="key">Escalation Notice:</span>
+                  <span id="track-res-escalation" class="val alert-text"></span>
+                </div>
+              </div>
+              <div id="track-secret-token-display" class="secret-token-box hidden">
+                <span class="token-alert-title">🔒 Save Your Tracking Secret:</span>
+                <code id="track-secret-token-val" class="token-code"></code>
+                <p class="token-note">Required for all future lookups. Stored as a salted SHA-256 hash on server.</p>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- 2. RECIPIENT PORTAL TAB                                           -->
+      <!-- ================================================================= -->
+      <section id="tab-panel-recipient" class="tab-panel" role="tabpanel" aria-labelledby="nav-tab-recipient">
+        <div class="panel-header">
+          <h1>Recipient Capacity & Dietary Check-in</h1>
+          <p class="panel-subtitle">Maintain real-time intake capacity so the autonomous router never over-allocates food to your shelter.</p>
+        </div>
+
+        <div class="grid-layout grid-2-col">
+          <article class="glass-card">
+            <h2 class="card-title">Partner Check-in Form</h2>
+            <form id="recipient-checkin-form" class="standard-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="recipient-input-id">Recipient ID *</label>
+                  <input type="text" id="recipient-input-id" required placeholder="e.g. rec-shelter-01">
+                </div>
+                <div class="form-group">
+                  <label for="recipient-input-token">Access Token *</label>
+                  <input type="password" id="recipient-input-token" required placeholder="Partner secret token">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="recipient-input-capacity">Remaining Intake Capacity (kg) *</label>
+                <input type="number" id="recipient-input-capacity" required min="0" max="10000" step="1" placeholder="150">
+              </div>
+
+              <div class="form-group">
+                <label>Operational Status *</label>
+                <div class="radio-group">
+                  <label class="radio-label">
+                    <input type="radio" name="rec-status" value="ACTIVE" checked> Active Intake
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" name="rec-status" value="INACTIVE"> Temporarily Paused
+                  </label>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Dietary Preferences / Exclusions</label>
+                <div class="checkbox-grid">
+                  <label class="check-label"><input type="checkbox" id="rec-pref-prepared" value="prepared_meals" checked> Prepared Meals</label>
+                  <label class="check-label"><input type="checkbox" id="rec-pref-produce" value="produce" checked> Fresh Produce</label>
+                  <label class="check-label"><input type="checkbox" id="rec-pref-bakery" value="bakery" checked> Bakery</label>
+                  <label class="check-label"><input type="checkbox" id="rec-pref-halal" value="halal"> Halal Certified Only</label>
+                </div>
+              </div>
+
+              <button type="submit" id="recipient-btn-update" class="btn btn-primary">
+                Update Capacity & Preferences
+              </button>
+              <div id="recipient-status-msg" class="alert-message hidden" role="alert"></div>
+            </form>
+          </article>
+
+          <article class="glass-card">
+            <h2 class="card-title">Capacity Management Principles</h2>
+            <ul class="principles-list">
+              <li><strong>Zero Spoilage Guarantee:</strong> Once your capacity drops below a donation's weight, the agent automatically loops to the next ranked recipient.</li>
+              <li><strong>Atomic Deductions:</strong> Claims occur via DynamoDB ACID transactions (`TransactWriteItems`), preventing double-allocations.</li>
+              <li><strong>Near-Capacity Warning:</strong> When intake falls below 30kg, an advisory signal alerts coordinators without disqualifying valid smaller donations.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- 3. VOLUNTEER PORTAL TAB                                           -->
+      <!-- ================================================================= -->
+      <section id="tab-panel-volunteer" class="tab-panel" role="tabpanel" aria-labelledby="nav-tab-volunteer">
+        <div class="panel-header">
+          <h1>Transit Volunteer Check-in & Assignments</h1>
+          <p class="panel-subtitle">Update dispatch availability and view active food delivery trips with strict cross-party privacy.</p>
+        </div>
+
+        <div class="grid-layout grid-2-col">
+          <article class="glass-card">
+            <h2 class="card-title">Volunteer Availability</h2>
+            <form id="volunteer-checkin-form" class="standard-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="volunteer-input-id">Volunteer ID *</label>
+                  <input type="text" id="volunteer-input-id" required placeholder="e.g. vol-alpha-01">
+                </div>
+                <div class="form-group">
+                  <label for="volunteer-input-token">Access Token *</label>
+                  <input type="password" id="volunteer-input-token" required placeholder="Volunteer secret token">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Transit Status *</label>
+                <div class="radio-group">
+                  <label class="radio-label">
+                    <input type="radio" name="vol-status" value="AVAILABLE" checked> Available for Dispatch
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" name="vol-status" value="UNAVAILABLE"> Off Duty / Busy
+                  </label>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="volunteer-input-vehicle">Vehicle Type</label>
+                  <select id="volunteer-input-vehicle">
+                    <option value="car">Car / SUV</option>
+                    <option value="van">Cargo Van</option>
+                    <option value="bicycle">Cargo Bicycle</option>
+                    <option value="foot">Walking / Cart</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="volunteer-input-max-kg">Max Capacity (kg)</label>
+                  <input type="number" id="volunteer-input-max-kg" min="5" max="1000" placeholder="50.0">
+                </div>
+              </div>
+
+              <button type="submit" id="volunteer-btn-save" class="btn btn-primary">Save Availability</button>
+              <div id="volunteer-status-msg" class="alert-message hidden" role="alert"></div>
+            </form>
+          </article>
+
+          <article class="glass-card">
+            <h2 class="card-title">My Assigned Rescue Missions</h2>
+            <button id="volunteer-btn-refresh-assignments" class="btn btn-secondary btn-sm">Refresh Trip Feed</button>
+            <div id="volunteer-assignments-container" class="assignments-list">
+              <p class="empty-state">Authenticate to inspect active pickup and delivery missions.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- 4. COORDINATOR COMMAND CENTER TAB (AUTHENTICATED)                 -->
+      <!-- ================================================================= -->
+      <section id="tab-panel-coordinator" class="tab-panel" role="tabpanel" aria-labelledby="nav-tab-coordinator">
+        <div class="panel-header">
+          <h1>Coordinator Command Center</h1>
+          <p class="panel-subtitle">Live system oversight, automated escalation handling, and manual dispatch overrides.</p>
+        </div>
+
+        <!-- Auth Gate Modal / Overlay -->
+        <div id="coord-auth-gate" class="glass-card coord-gate-card">
+          <span class="gate-icon">🔐</span>
+          <h2>Coordinator Authentication Required</h2>
+          <p>Please enter your authorized Coordinator API Key to access live management feeds.</p>
+          <form id="coordinator-login-form" class="inline-form">
+            <input type="password" id="coord-input-api-key" placeholder="Enter Coordinator API Key" required minlength="16">
+            <button type="submit" id="coord-btn-login" class="btn btn-primary">Authenticate</button>
+          </form>
+          <div id="coord-login-error" class="alert-message alert-error hidden" role="alert"></div>
+        </div>
+
+        <!-- Authenticated Dashboard View -->
+        <div id="coord-dashboard-view" class="coord-view-container hidden">
+          <div class="dashboard-toolbar">
+            <div class="toolbar-status">
+              <span class="badge badge-online">● Session Active</span>
+              <span id="coord-last-refresh" class="timestamp-text"></span>
+            </div>
+            <div class="toolbar-actions">
+              <button id="coord-btn-refresh" class="btn btn-secondary btn-sm">Refresh Live Feed</button>
+              <button id="coord-btn-logout" class="btn btn-danger btn-sm">Sign Out</button>
+            </div>
+          </div>
+
+          <!-- Dual Column: Escalation Queue & Live Feed -->
+          <div class="grid-layout grid-2-col">
+            <!-- Escalation Queue -->
+            <article class="glass-card">
+              <div class="card-header-badge">
+                <h2 class="card-title">⚠️ Escalation Queue (Action Required)</h2>
+                <span id="coord-escalation-count" class="counter-badge count-warning">0</span>
+              </div>
+              <div id="coord-escalations-list" class="queue-list">
+                <p class="empty-state">No pending escalations. Autonomous coordination healthy.</p>
+              </div>
+            </article>
+
+            <!-- Live Lifecycle Feed -->
+            <article class="glass-card">
+              <div class="card-header-badge">
+                <h2 class="card-title">Active Donation Pipeline</h2>
+                <span id="coord-donation-count" class="counter-badge count-info">0</span>
+              </div>
+              <div id="coord-donations-feed" class="feed-list">
+                <p class="empty-state">Loading active donations...</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- 5. IMPACT SUMMARY TAB                                             -->
+      <!-- ================================================================= -->
+      <section id="tab-panel-impact" class="tab-panel" role="tabpanel" aria-labelledby="nav-tab-impact">
+        <div class="panel-header">
+          <h1>Community Food Rescue Impact</h1>
+          <p class="panel-subtitle">Cumulative metrics quantifying surplus food diverted from landfills to community kitchens.</p>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-card glass-card">
+            <span class="metric-icon">⚖️</span>
+            <div class="metric-val" id="metric-kg-routed">0.0 kg</div>
+            <div class="metric-label">Surplus Food Routed</div>
+          </div>
+
+          <div class="metric-card glass-card">
+            <span class="metric-icon">🍲</span>
+            <div class="metric-val" id="metric-meals-routed">0</div>
+            <div class="metric-label">Meals Equivalent (USDA 0.5kg/meal)</div>
+          </div>
+
+          <div class="metric-card glass-card">
+            <span class="metric-icon">🏛️</span>
+            <div class="metric-val" id="metric-orgs-served">0</div>
+            <div class="metric-label">Non-Profit Partners Fed</div>
+          </div>
+
+          <div class="metric-card glass-card">
+            <span class="metric-icon">🚚</span>
+            <div class="metric-val" id="metric-active-volunteers">5</div>
+            <div class="metric-label">Active Transit Volunteers</div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="app-footer">
+    <div class="footer-container">
+      <p>Food Rescue Coordination Agent • Built with Strands Agents SDK & Amazon Bedrock AgentCore</p>
+      <p class="sub-footer">Zero-IDOR Security • Cryptographic Capability Tokens • Constant-Time Comparison</p>
+    </div>
+  </footer>
+
+  <!-- Main Vanilla Script -->
+  <script src="js/app.js"></script>
+</body>
+</html>
