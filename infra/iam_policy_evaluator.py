@@ -1,9 +1,11 @@
 """IAM Least-Privilege Policy Evaluator for FRCA Infrastructure.
 
 Evaluates IAM execution policies against both positive (allowed) and
-negative (denied) authorization boundaries using official AWS IAM
-SimulateCustomPolicy API when available, with resilient fallback to a
-deterministic AWS-spec-compliant policy engine.
+negative (denied) authorization boundaries. Official AWS IAM
+SimulateCustomPolicy API serves as the authoritative verification path,
+with transparent fallback to a deterministic evaluator for the project's
+supported IAM policy subset when live AWS credentials or simulation
+permissions are unavailable.
 """
 
 import fnmatch
@@ -211,9 +213,16 @@ def evaluate_policy_locally(
     action: str,
     resource_arn: str,
 ) -> tuple[str, str | None, str]:
-    """Deterministic, AWS-spec-compliant offline policy evaluation engine.
+    """Deterministic evaluator for the project's supported IAM policy subset.
 
-    Follows AWS IAM evaluation logic:
+    NOTE: Official AWS iam:SimulateCustomPolicy remains the authoritative
+    verification path for deployed AWS IAM behavior. This local evaluator
+    provides deterministic offline evaluation for the project's specific policy
+    statements (Allow/Deny effects, action pattern matching, and resource ARN
+    prefix/wildcard matching) when AWS credentials or simulate permissions are
+    unavailable, without claiming universal AWS specification compliance.
+
+    Evaluation logic for supported policy subset:
     1. Default is implicitDeny.
     2. Any matching statement with Effect=Deny results in immediate explicitDeny.
     3. If no explicit Deny, any matching statement with Effect=Allow results in allowed.
@@ -369,10 +378,10 @@ def simulate_role_action(
     EVALUATION_METRICS["TOTAL"] += 1
 
     advisory = (
-        f"Evaluated via deterministic fallback engine "
-        f"(AWS attempt reason: {aws_attempt_error})"
+        f"Evaluated via deterministic fallback engine for supported policy subset "
+        f"(authoritative AWS attempt reason: {aws_attempt_error})"
         if aws_attempt_error
-        else "Evaluated via deterministic fallback engine"
+        else "Evaluated via deterministic fallback engine for supported policy subset"
     )
 
     LOGGER.info(
@@ -437,8 +446,8 @@ def format_evaluation_summary() -> str:
         "\n=======================================================\n"
         "           IAM LEAST-PRIVILEGE EVALUATION SUMMARY      \n"
         "=======================================================\n"
-        f"Total Assertions Evaluated : {total}\n"
-        f"Live AWS API Verifications : {aws} ({pct_aws:.1f}%)\n"
-        f"Fallback Engine Executions : {fallback} ({pct_fallback:.1f}%)\n"
+        f"Total Assertions Evaluated              : {total}\n"
+        f"Live AWS Authoritative Verifications   : {aws} ({pct_aws:.1f}%)\n"
+        f"Supported-Subset Fallback Executions    : {fallback} ({pct_fallback:.1f}%)\n"
         "=======================================================\n"
     )
