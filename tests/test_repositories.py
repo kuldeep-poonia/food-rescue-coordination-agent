@@ -618,7 +618,7 @@ def test_donations_repo_compute_date_status_across_mutations(
     """Verify compute_date_status and date_status across donation lifecycle."""
     repo = DonationsRepository(dynamodb_resource=mock_dynamodb)
     now = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
-    future = now + timedelta(hours=4)
+    future = datetime.now(timezone.utc) + timedelta(hours=4)
 
     # Unit test compute_date_status
     ds_reported = compute_date_status(DonationStatus.REPORTED, now)
@@ -669,8 +669,7 @@ def test_donations_repo_escalate_donation_transitions_and_guards(
 ) -> None:
     """Verify escalate_donation transitions on REPORTED and rejects post-dispatch."""
     repo = DonationsRepository(dynamodb_resource=mock_dynamodb)
-    now = datetime(2026, 9, 5, 14, 0, 0, tzinfo=timezone.utc)
-    future = now + timedelta(hours=3)
+    future = datetime.now(timezone.utc) + timedelta(hours=3)
 
     # 1. Escalate from REPORTED
     donation = Donation(
@@ -689,9 +688,12 @@ def test_donations_repo_escalate_donation_transitions_and_guards(
     )
     repo.create_donation(donation)
 
-    assert repo.escalate_donation(
-        "don-esc-repo-01", EscalationReason.NO_MATCH_WITHIN_WINDOW
-    ) is True
+    assert (
+        repo.escalate_donation(
+            "don-esc-repo-01", EscalationReason.NO_MATCH_WITHIN_WINDOW
+        )
+        is True
+    )
     escalated = repo.get_donation("don-esc-repo-01")
     assert escalated is not None
     assert escalated.status == DonationStatus.ESCALATED
@@ -699,9 +701,12 @@ def test_donations_repo_escalate_donation_transitions_and_guards(
     assert escalated.date_status.endswith("#escalated")
 
     # 2. Idempotent re-escalation is a clean no-op
-    assert repo.escalate_donation(
-        "don-esc-repo-01", EscalationReason.NO_MATCH_WITHIN_WINDOW
-    ) is True
+    assert (
+        repo.escalate_donation(
+            "don-esc-repo-01", EscalationReason.NO_MATCH_WITHIN_WINDOW
+        )
+        is True
+    )
 
     # 3. Post-dispatch rejection: donation in ASSIGNED state must reject escalation
     donation_assigned = Donation(
@@ -785,4 +790,3 @@ def test_donations_repo_get_authoritative_daily_summary_gsi() -> None:
     mock_table.query.assert_called_once()
     _, kwargs = mock_table.query.call_args
     assert kwargs.get("IndexName") == "region-date-status-index"
-

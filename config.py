@@ -72,22 +72,34 @@ def load_app_configuration() -> AppConfig:
     Raises:
         None: Safe fallbacks are provided for all configurations.
     """
+    env_name = os.environ.get("ENVIRONMENT")
+    if not env_name:
+        fn_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "")
+        if "-dev" in fn_name:
+            env_name = "dev"
+        elif "-prod" in fn_name:
+            env_name = "prod"
+        elif "-staging" in fn_name:
+            env_name = "staging"
+
+    suffix = f"-{env_name}" if env_name else "-table"
+
     return AppConfig(
         aws_region=os.environ.get("AWS_REGION", "us-east-1"),
         donations_table_name=os.environ.get(
-            "DONATIONS_TABLE_NAME", "frca-donations-table"
+            "DONATIONS_TABLE_NAME", f"frca-donations{suffix}"
         ),
         recipients_table_name=os.environ.get(
-            "RECIPIENTS_TABLE_NAME", "frca-recipients-table"
+            "RECIPIENTS_TABLE_NAME", f"frca-recipients{suffix}"
         ),
         volunteers_table_name=os.environ.get(
-            "VOLUNTEERS_TABLE_NAME", "frca-volunteers-table"
+            "VOLUNTEERS_TABLE_NAME", f"frca-volunteers{suffix}"
         ),
         matches_audit_table_name=os.environ.get(
-            "MATCHES_AUDIT_TABLE_NAME", "frca-matches-audit-table"
+            "MATCHES_AUDIT_TABLE_NAME", f"frca-matches-audit{suffix}"
         ),
         sessions_memory_table_name=os.environ.get(
-            "SESSIONS_MEMORY_TABLE_NAME", "frca-sessions-memory-table"
+            "SESSIONS_MEMORY_TABLE_NAME", f"frca-sessions-memory{suffix}"
         ),
         notification_topic_arn=os.environ.get(
             "NOTIFICATION_TOPIC_ARN",
@@ -107,9 +119,7 @@ def load_app_configuration() -> AppConfig:
         route_calculator_name=os.environ.get(
             "ROUTE_CALCULATOR_NAME", "frca-route-calculator-placeholder"
         ),
-        bedrock_agent_id=os.environ.get(
-            "AGENT_ID", "BEDROCK_AGENT_ID_PLACEHOLDER"
-        ),
+        bedrock_agent_id=os.environ.get("AGENT_ID", "BEDROCK_AGENT_ID_PLACEHOLDER"),
         bedrock_agent_alias_id=os.environ.get(
             "AGENT_ALIAS_ID", "BEDROCK_AGENT_ALIAS_ID_PLACEHOLDER"
         ),

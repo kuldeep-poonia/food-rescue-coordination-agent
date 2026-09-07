@@ -67,9 +67,8 @@ def test_concurrent_load_two_hundred_donations() -> None:
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
         # Assert no corruption: returned donation_id must match input
-        is_valid = (
-            res.donation_id == donation.donation_id
-            and (res.best_match is not None or res.rejection_reason is not None)
+        is_valid = res.donation_id == donation.donation_id and (
+            res.best_match is not None or res.rejection_reason is not None
         )
         return donation.donation_id, elapsed_ms, is_valid
 

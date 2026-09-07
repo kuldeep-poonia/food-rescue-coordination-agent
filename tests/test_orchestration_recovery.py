@@ -128,8 +128,10 @@ def test_replay_recovery_for_assigned_status() -> None:
         ),
     ]
 
-    with mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
-         mock.patch("agent.orchestrator.send_notification") as mock_notify:
+    with (
+        mock.patch("agent.orchestrator.assign_volunteer") as mock_assign,
+        mock.patch("agent.orchestrator.send_notification") as mock_notify,
+    ):
         mock_assign.return_value = VolunteerAssignment(
             assignment_id="asg-replay-01",
             donation_id="don-assigned-01",
@@ -193,8 +195,10 @@ def test_resume_from_assigned_status_recovers_missing_recipient_notification() -
         # Notice don-assigned-02:notify_recipient is missing!
     ]
 
-    with mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
-         mock.patch("agent.orchestrator.send_notification") as mock_notify:
+    with (
+        mock.patch("agent.orchestrator.assign_volunteer") as mock_assign,
+        mock.patch("agent.orchestrator.send_notification") as mock_notify,
+    ):
         mock_assign.return_value = VolunteerAssignment(
             assignment_id="asg-replay-02",
             donation_id="don-assigned-02",
@@ -216,10 +220,7 @@ def test_resume_from_assigned_status_recovers_missing_recipient_notification() -
         # Ensure recipient notification audit event was persisted
         mock_audit.record_audit_event.assert_called_once()
         recorded_event = mock_audit.record_audit_event.call_args[0][0]
-        assert (
-            recorded_event.idempotency_key
-            == "don-assigned-02:notify_recipient"
-        )
+        assert recorded_event.idempotency_key == "don-assigned-02:notify_recipient"
 
 
 def test_resume_from_matched_status_skips_match_and_deduct() -> None:
@@ -244,11 +245,12 @@ def test_resume_from_matched_status_skips_match_and_deduct() -> None:
     )
     mock_donations.get_donation.return_value = donation
 
-    with mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
-         mock.patch("agent.orchestrator.classify_donation") as mock_classify, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.send_notification") as mock_notify:
-
+    with (
+        mock.patch("agent.orchestrator.assign_volunteer") as mock_assign,
+        mock.patch("agent.orchestrator.classify_donation") as mock_classify,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.send_notification") as mock_notify,
+    ):
         mock_assign.return_value = VolunteerAssignment(
             assignment_id="asg-resumed-01",
             donation_id="don-matched-01",
@@ -322,11 +324,12 @@ def test_candidate_fallback_loop_on_insufficient_capacity() -> None:
         True,
     ]
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_get_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
-         mock.patch("agent.orchestrator.send_notification"):
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_get_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.assign_volunteer") as mock_assign,
+        mock.patch("agent.orchestrator.send_notification"),
+    ):
         mock_get_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-fb-01",
@@ -393,14 +396,15 @@ def test_candidate_claim_race_conflict_escalates_immediately() -> None:
         reason="Second best match",
     )
 
-    mock_donations.claim_and_deduct_recipient.side_effect = (
-        DonationClaimConflictError("Donation don-conflict-01 already claimed")
+    mock_donations.claim_and_deduct_recipient.side_effect = DonationClaimConflictError(
+        "Donation don-conflict-01 already claimed"
     )
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_get_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.flag_for_human") as mock_flag:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_get_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.flag_for_human") as mock_flag,
+    ):
         mock_get_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-conflict-01",
@@ -423,8 +427,7 @@ def test_candidate_claim_race_conflict_escalates_immediately() -> None:
         assert result.status == DonationStatus.ESCALATED
         assert result.escalation_ticket is not None
         assert (
-            result.escalation_ticket.reason
-            == EscalationReason.RECIPIENT_CLAIM_CONFLICT
+            result.escalation_ticket.reason == EscalationReason.RECIPIENT_CLAIM_CONFLICT
         )
 
 
@@ -463,11 +466,12 @@ def test_volunteer_exhaustion_triggers_atomic_unwind_and_escalation() -> None:
     mock_donations.claim_and_deduct_recipient.return_value = True
     mock_donations.unclaim_and_restore_recipient.return_value = True
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_get_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
-         mock.patch("agent.orchestrator.flag_for_human") as mock_flag:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_get_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.assign_volunteer") as mock_assign,
+        mock.patch("agent.orchestrator.flag_for_human") as mock_flag,
+    ):
         mock_get_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-unwind-01",

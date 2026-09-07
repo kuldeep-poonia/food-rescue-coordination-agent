@@ -39,9 +39,7 @@ class VolunteersRepository:
         """
         self._config: AppConfig = config or load_app_configuration()
         if dynamodb_resource is not None:
-            self._table = dynamodb_resource.Table(
-                self._config.volunteers_table_name
-            )
+            self._table = dynamodb_resource.Table(self._config.volunteers_table_name)
         else:
             import boto3
 
@@ -118,20 +116,37 @@ class VolunteersRepository:
         Raises:
             ClientError: If DynamoDB query fails after retries.
         """
-        response = self._table.query(
-            IndexName="region-status-index",
-            KeyConditionExpression=(
-                Key("service_region").eq(service_region)
-                & Key("status").eq(VolunteerStatus.AVAILABLE.value)
-            ),
-        )
-        items = response.get("Items", [])
+        try:
+            response = self._table.query(
+                IndexName="region-status-index",
+                KeyConditionExpression=(
+                    Key("service_region").eq(service_region)
+                    & Key("status").eq(VolunteerStatus.AVAILABLE.value)
+                ),
+            )
+            items = response.get("Items", [])
+        except ClientError as exc:
+            err_msg = exc.response.get("Error", {}).get("Message", "")
+            code = exc.response.get("Error", {}).get("Code", "")
+            if (
+                "The table does not have the specified index" in err_msg
+                or code == "ValidationException"
+            ):
+                from boto3.dynamodb.conditions import Attr
+
+                response = self._table.scan(
+                    FilterExpression=(
+                        Attr("service_region").eq(service_region)
+                        & Attr("status").eq(VolunteerStatus.AVAILABLE.value)
+                    )
+                )
+                items = response.get("Items", [])
+            else:
+                raise
         return [Volunteer.model_validate(item) for item in items]
 
     @with_dynamodb_retry
-    def set_volunteer_availability(
-        self, volunteer_id: str, is_available: bool
-    ) -> bool:
+    def set_volunteer_availability(self, volunteer_id: str, is_available: bool) -> bool:
         """Atomically update a volunteer's availability status.
 
         Args:
@@ -160,8 +175,7 @@ class VolunteersRepository:
                 Key={"volunteer_id": volunteer_id},
                 UpdateExpression="SET #st = :new_state",
                 ConditionExpression=(
-                    "attribute_exists(volunteer_id) AND "
-                    "#st = :expected_state"
+                    "attribute_exists(volunteer_id) AND #st = :expected_state"
                 ),
                 ExpressionAttributeNames={
                     "#st": "status",

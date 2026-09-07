@@ -418,5 +418,3 @@ def test_agent_core_runtime_models() -> None:
         },
     )
     assert response.response["httpStatusCode"] == 200
-
-

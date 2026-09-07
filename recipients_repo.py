@@ -39,9 +39,7 @@ class RecipientsRepository:
         """
         self._config: AppConfig = config or load_app_configuration()
         if dynamodb_resource is not None:
-            self._table = dynamodb_resource.Table(
-                self._config.recipients_table_name
-            )
+            self._table = dynamodb_resource.Table(self._config.recipients_table_name)
         else:
             import boto3
 
@@ -106,9 +104,7 @@ class RecipientsRepository:
         return Recipient.model_validate(item)
 
     @with_dynamodb_retry
-    def query_active_recipients_by_region(
-        self, service_region: str
-    ) -> list[Recipient]:
+    def query_active_recipients_by_region(self, service_region: str) -> list[Recipient]:
         """Query all active recipients in a designated service region.
 
         Args:
@@ -120,14 +116,33 @@ class RecipientsRepository:
         Raises:
             ClientError: If DynamoDB query fails after retries.
         """
-        response = self._table.query(
-            IndexName="region-status-index",
-            KeyConditionExpression=(
-                Key("service_region").eq(service_region)
-                & Key("status").eq(RecipientStatus.ACTIVE.value)
-            ),
-        )
-        items = response.get("Items", [])
+        try:
+            response = self._table.query(
+                IndexName="region-status-index",
+                KeyConditionExpression=(
+                    Key("service_region").eq(service_region)
+                    & Key("status").eq(RecipientStatus.ACTIVE.value)
+                ),
+            )
+            items = response.get("Items", [])
+        except ClientError as exc:
+            err_msg = exc.response.get("Error", {}).get("Message", "")
+            code = exc.response.get("Error", {}).get("Code", "")
+            if (
+                "The table does not have the specified index" in err_msg
+                or code == "ValidationException"
+            ):
+                from boto3.dynamodb.conditions import Attr
+
+                response = self._table.scan(
+                    FilterExpression=(
+                        Attr("service_region").eq(service_region)
+                        & Attr("status").eq(RecipientStatus.ACTIVE.value)
+                    )
+                )
+                items = response.get("Items", [])
+            else:
+                raise
         return [Recipient.model_validate(item) for item in items]
 
     @with_dynamodb_retry
@@ -153,8 +168,7 @@ class RecipientsRepository:
                     "SET capacity_kg_remaining = capacity_kg_remaining - :qty"
                 ),
                 ConditionExpression=(
-                    "attribute_exists(recipient_id) AND "
-                    "capacity_kg_remaining >= :qty"
+                    "attribute_exists(recipient_id) AND capacity_kg_remaining >= :qty"
                 ),
                 ExpressionAttributeValues={
                     ":qty": qty_decimal,
@@ -219,7 +233,5 @@ class RecipientsRepository:
                     "Capacity restore failed: recipient %s does not exist",
                     recipient_id,
                 )
-                raise KeyError(
-                    f"Recipient {recipient_id} does not exist"
-                ) from exc
+                raise KeyError(f"Recipient {recipient_id} does not exist") from exc
             raise

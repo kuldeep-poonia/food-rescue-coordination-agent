@@ -78,9 +78,7 @@ def test_dry_run_executes_all_pipeline_steps_without_mutations() -> None:
 
     donation = make_test_donation("don-sim-01")
     mock_donations.get_donation.return_value = donation
-    mock_recipients.get_recipient.return_value = make_test_recipient(
-        "rec-sim-01", 50.0
-    )
+    mock_recipients.get_recipient.return_value = make_test_recipient("rec-sim-01", 50.0)
 
     cand = MatchCandidate(
         recipient_id="rec-sim-01",
@@ -92,11 +90,12 @@ def test_dry_run_executes_all_pipeline_steps_without_mutations() -> None:
         reason="Best match for simulation",
     )
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
-         mock.patch("agent.orchestrator.send_notification") as mock_notify:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.assign_volunteer") as mock_assign,
+        mock.patch("agent.orchestrator.send_notification") as mock_notify,
+    ):
         mock_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-sim-01",
@@ -182,9 +181,10 @@ def test_dry_run_simulates_candidate_capacity_fallback_loop() -> None:
 
     mock_recipients.get_recipient.side_effect = mock_get_rec
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+    ):
         mock_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-sim-fb-01",
@@ -230,14 +230,13 @@ def test_dry_run_simulates_exhaustion_when_all_candidates_lack_capacity() -> Non
     )
 
     # Candidate only has 10kg (< 25kg)
-    mock_recipients.get_recipient.return_value = make_test_recipient(
-        "rec-low-01", 10.0
-    )
+    mock_recipients.get_recipient.return_value = make_test_recipient("rec-low-01", 10.0)
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.flag_for_human") as mock_flag:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.flag_for_human") as mock_flag,
+    ):
         mock_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-sim-ex-01",
@@ -258,8 +257,7 @@ def test_dry_run_simulates_exhaustion_when_all_candidates_lack_capacity() -> Non
         assert result.status == DonationStatus.ESCALATED
         mock_flag.assert_called_once()
         assert (
-            mock_flag.call_args[1]["reason"]
-            == EscalationReason.NO_MATCH_WITHIN_WINDOW
+            mock_flag.call_args[1]["reason"] == EscalationReason.NO_MATCH_WITHIN_WINDOW
         )
         mock_donations.claim_and_deduct_recipient.assert_not_called()
 
@@ -298,17 +296,12 @@ def test_dry_run_with_food_safety_breach_escalates_without_mutations() -> None:
             reason=EscalationReason.FOOD_SAFETY_THRESHOLD_BREACH,
             details={},
         )
-        result = orchestrator.coordinate_donation(
-            "don-sim-safety-01", dry_run=True
-        )
+        result = orchestrator.coordinate_donation("don-sim-safety-01", dry_run=True)
 
         assert result.is_dry_run is True
         assert result.status == DonationStatus.ESCALATED
         mock_flag.assert_called_once()
         call_kwargs = mock_flag.call_args[1]
-        assert (
-            call_kwargs["reason"]
-            == EscalationReason.FOOD_SAFETY_THRESHOLD_BREACH
-        )
+        assert call_kwargs["reason"] == EscalationReason.FOOD_SAFETY_THRESHOLD_BREACH
         mock_donations.claim_and_deduct_recipient.assert_not_called()
         mock_audit.record_audit_event.assert_not_called()

@@ -42,7 +42,6 @@ def test_configuration_defaults_match_placeholders() -> None:
         assert cfg.memory_ttl_days == 30
 
 
-
 def test_configuration_environment_overrides() -> None:
     """Verify environment variables override default placeholder values."""
     custom_notif = "arn:aws:sns:us-west-2:999999999999:custom-notif"
@@ -105,4 +104,3 @@ def test_operational_threshold_constants() -> None:
     assert CAPACITY_WARNING_THRESHOLD_KG == 30.0
     assert DEFAULT_SESSION_TTL_HOURS == 24
     assert DEFAULT_MEMORY_TTL_DAYS == 30
-

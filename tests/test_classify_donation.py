@@ -34,7 +34,7 @@ def test_classify_donation_food_safety_threshold_boundary() -> None:
     At 3599s -> is_safety_threshold_breached is True.
     At 3600s -> is_safety_threshold_breached is False.
     """
-    now = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     future_ready = now + timedelta(minutes=10)
 
     # Scenario 1: Exactly 3599 seconds remaining from 'now'
@@ -60,7 +60,7 @@ def test_classify_donation_food_safety_threshold_boundary() -> None:
 
 def test_classify_donation_urgency_tier_boundaries() -> None:
     """Verify boundaries between CRITICAL (<2h), HIGH (2h-6h), and STANDARD (>=6h)."""
-    now = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     future_ready = now + timedelta(minutes=10)
 
     # 7199 seconds (1h 59m 59s) -> CRITICAL

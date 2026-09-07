@@ -1,7 +1,7 @@
 """Unit and integration tests for session continuity and reconciliation."""
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest import mock
 
@@ -283,7 +283,7 @@ def test_session_near_capacity_has_zero_disqualification_power() -> None:
         donor_coordinates=Coordinates(latitude=40.7128, longitude=-74.0060),
         food_category=FoodCategory.BAKERY,
         quantity_kg=20.0,
-        ready_by=datetime(2026, 9, 5, 15, 0, 0, tzinfo=timezone.utc),
+        ready_by=datetime.now(timezone.utc) + timedelta(hours=2),
         perishability_hours=4.0,
         service_region="metro-core",
     )

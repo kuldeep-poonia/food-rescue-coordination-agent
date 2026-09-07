@@ -114,9 +114,7 @@ def find_best_match(
             dietary_fit = False
 
         # 4. Capacity efficiency score
-        utilization = donation.quantity_kg / max(
-            recipient.capacity_kg_remaining, 1.0
-        )
+        utilization = donation.quantity_kg / max(recipient.capacity_kg_remaining, 1.0)
         capacity_score = max(0.2, min(1.0, utilization * 1.5))
 
         total_score = round(

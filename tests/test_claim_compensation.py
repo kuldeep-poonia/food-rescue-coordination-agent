@@ -1,5 +1,3 @@
-"""Hardcore test suite for cross-table claim transactions and unwind compensation."""
-
 from unittest import mock
 
 import pytest
@@ -98,6 +96,20 @@ def test_claim_and_deduct_cancellation_reasons_priority() -> None:
         "TransactWriteItems",
     )
     with pytest.raises(DonationClaimConflictError, match="already claimed"):
+        repo.claim_and_deduct_recipient("don-p-01", "rec-01", 30.0)
+
+    # 4. Other failure re-raises original ClientError directly
+    mock_client.transact_write_items.side_effect = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException"},
+            "CancellationReasons": [
+                {"Code": "ValidationError", "Message": "Schema type mismatch"},
+                {"Code": "None"},
+            ],
+        },
+        "TransactWriteItems",
+    )
+    with pytest.raises(ClientError):
         repo.claim_and_deduct_recipient("don-p-01", "rec-01", 30.0)
 
 

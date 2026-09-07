@@ -18,12 +18,14 @@ F = TypeVar("F", bound=Callable[..., Any])
 LOGGER: logging.Logger = logging.getLogger(__name__)
 
 # Transient error codes that warrant automated retry with backoff
-RETRIABLE_DYNAMO_ERROR_CODES: frozenset[str] = frozenset({
-    "InternalServerError",
-    "ProvisionedThroughputExceededException",
-    "RequestLimitExceeded",
-    "ThrottlingException",
-})
+RETRIABLE_DYNAMO_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "InternalServerError",
+        "ProvisionedThroughputExceededException",
+        "RequestLimitExceeded",
+        "ThrottlingException",
+    }
+)
 
 # Base backoff interval in seconds for exponential calculations
 BASE_BACKOFF_SECONDS: float = 0.1
@@ -41,6 +43,7 @@ def with_dynamodb_retry(operation: F) -> F:
     Raises:
         ClientError: If error is non-retriable or retry attempts are exhausted.
     """
+
     @functools.wraps(operation)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         attempts: int = 0

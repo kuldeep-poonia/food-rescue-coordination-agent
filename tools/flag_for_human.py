@@ -83,9 +83,7 @@ def flag_for_human(
     # 1. Update donation status to escalated if donation exists
     donation = d_repo.get_donation(donation_id, consistent_read=True)
     if donation is not None:
-        LOGGER.info(
-            "Marking donation %s as escalated in repository", donation_id
-        )
+        LOGGER.info("Marking donation %s as escalated in repository", donation_id)
         d_repo.escalate_donation(donation_id, reason)
 
     # 2. Record immutable audit event

@@ -34,9 +34,7 @@ class AuditRepository:
         """
         self._config: AppConfig = config or load_app_configuration()
         if dynamodb_resource is not None:
-            self._table = dynamodb_resource.Table(
-                self._config.matches_audit_table_name
-            )
+            self._table = dynamodb_resource.Table(self._config.matches_audit_table_name)
         else:
             import boto3
 
@@ -97,10 +95,26 @@ class AuditRepository:
         Raises:
             ClientError: If DynamoDB query fails after retries.
         """
-        response = self._table.query(
-            IndexName="donation-audit-index",
-            KeyConditionExpression=Key("donation_id").eq(donation_id),
-            ScanIndexForward=True,
-        )
-        items = response.get("Items", [])
+        try:
+            response = self._table.query(
+                IndexName="donation-audit-index",
+                KeyConditionExpression=Key("donation_id").eq(donation_id),
+                ScanIndexForward=True,
+            )
+            items = response.get("Items", [])
+        except ClientError as exc:
+            err_msg = exc.response.get("Error", {}).get("Message", "")
+            code = exc.response.get("Error", {}).get("Code", "")
+            if (
+                "The table does not have the specified index" in err_msg
+                or code == "ValidationException"
+            ):
+                from boto3.dynamodb.conditions import Attr
+
+                response = self._table.scan(
+                    FilterExpression=Attr("donation_id").eq(donation_id)
+                )
+                items = response.get("Items", [])
+            else:
+                raise
         return [AuditEvent.model_validate(item) for item in items]

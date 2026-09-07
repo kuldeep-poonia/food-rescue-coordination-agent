@@ -68,8 +68,8 @@ class StrandsOrchestrator:
             config: Optional application configuration instance.
         """
         self._config: AppConfig = config or load_app_configuration()
-        self._donations_repo = (
-            donations_repo or DonationsRepository(config=self._config)
+        self._donations_repo = donations_repo or DonationsRepository(
+            config=self._config
         )
         self._recipients_repo = recipients_repo or RecipientsRepository(
             config=self._config
@@ -78,9 +78,7 @@ class StrandsOrchestrator:
             config=self._config
         )
         self._audit_repo = audit_repo or AuditRepository(config=self._config)
-        self._distance_calculator = (
-            distance_calculator or GeodesicDistanceCalculator()
-        )
+        self._distance_calculator = distance_calculator or GeodesicDistanceCalculator()
         self._sns_client = sns_client
 
     def _dispatch_donor_notification(
@@ -154,16 +152,10 @@ class StrandsOrchestrator:
             return
 
         rec_entity = (
-            self._recipients_repo.get_recipient(recipient_id)
-            if recipient_id
-            else None
+            self._recipients_repo.get_recipient(recipient_id) if recipient_id else None
         )
-        rec_phone = (
-            rec_entity.contact_phone if rec_entity else donation.donor_phone
-        )
-        target_contact = (
-            rec_entity.contact_name if rec_entity else contact_name
-        )
+        rec_phone = rec_entity.contact_phone if rec_entity else donation.donor_phone
+        target_contact = rec_entity.contact_name if rec_entity else contact_name
 
         send_notification(
             recipient_type=NotificationRecipientType.RECIPIENT,
@@ -219,9 +211,7 @@ class StrandsOrchestrator:
         )
 
         assigned_vol_id = (
-            assignment.volunteer_id
-            if assignment
-            else donation.assigned_volunteer_id
+            assignment.volunteer_id if assignment else donation.assigned_volunteer_id
         )
         vol_name = "Assigned Volunteer"
         if assigned_vol_id:
@@ -303,9 +293,7 @@ class StrandsOrchestrator:
         # ------------------------------------------------------------------
         # Step 0: Status-Driven Resume Inspection (Strongly Consistent Read)
         # ------------------------------------------------------------------
-        donation = self._donations_repo.get_donation(
-            donation_id, consistent_read=True
-        )
+        donation = self._donations_repo.get_donation(donation_id, consistent_read=True)
         if donation is None:
             ticket = flag_for_human(
                 donation_id=donation_id,
@@ -393,9 +381,7 @@ class StrandsOrchestrator:
                     ),
                     details={
                         "urgency_level": classification.urgency_level.value,
-                        "shelf_life_hours": (
-                            classification.shelf_life_remaining_hours
-                        ),
+                        "shelf_life_hours": (classification.shelf_life_remaining_hours),
                         "perishability_hours": donation.perishability_hours,
                     },
                     correlation_id=corr_id,
@@ -518,8 +504,7 @@ class StrandsOrchestrator:
                     )
                     if (
                         rec_entity is not None
-                        and rec_entity.capacity_kg_remaining
-                        >= donation.quantity_kg
+                        and rec_entity.capacity_kg_remaining >= donation.quantity_kg
                     ):
                         claimed_candidate = candidate
                         target_recipient_id = candidate.recipient_id
@@ -543,9 +528,7 @@ class StrandsOrchestrator:
                         reason=EscalationReason.NO_MATCH_WITHIN_WINDOW,
                         summary="All matched recipient candidates lack capacity",
                         details={
-                            "exhausted_candidates": len(
-                                match_result.ranked_candidates
-                            )
+                            "exhausted_candidates": len(match_result.ranked_candidates)
                         },
                         correlation_id=corr_id,
                         donations_repo=self._donations_repo,
@@ -564,6 +547,15 @@ class StrandsOrchestrator:
             else:
                 for candidate in match_result.ranked_candidates:
                     try:
+                        LOGGER.info(
+                            "Attempting atomic claim on recipient: %s "
+                            "(name: %s, score: %.2f) for %.2f kg",
+                            candidate.recipient_id,
+                            candidate.recipient_name,
+                            candidate.score,
+                            donation.quantity_kg,
+                            extra={"correlation_id": corr_id},
+                        )
                         self._donations_repo.claim_and_deduct_recipient(
                             donation_id=donation.donation_id,
                             recipient_id=candidate.recipient_id,
@@ -622,9 +614,7 @@ class StrandsOrchestrator:
                         reason=EscalationReason.NO_MATCH_WITHIN_WINDOW,
                         summary="All matched recipient candidates exhausted",
                         details={
-                            "exhausted_candidates": len(
-                                match_result.ranked_candidates
-                            )
+                            "exhausted_candidates": len(match_result.ranked_candidates)
                         },
                         correlation_id=corr_id,
                         donations_repo=self._donations_repo,

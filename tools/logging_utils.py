@@ -26,9 +26,7 @@ class StructuredJsonFormatter(logging.Formatter):
         Returns:
             JSON-serialized log message string.
         """
-        correlation_id = getattr(
-            record, "correlation_id", CORRELATION_ID_CONTEXT.get()
-        )
+        correlation_id = getattr(record, "correlation_id", CORRELATION_ID_CONTEXT.get())
         tool_name = getattr(record, "tool_name", record.name)
 
         payload: dict[str, Any] = {

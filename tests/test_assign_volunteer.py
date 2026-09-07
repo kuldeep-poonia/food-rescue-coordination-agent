@@ -398,4 +398,3 @@ def test_concurrent_donations_competing_for_single_volunteer() -> None:
     assert len(successful_assignments) == 1
     assert len(unmatched_results) == 1
     assert successful_assignments[0].volunteer_id == "vol-single"
-

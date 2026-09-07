@@ -70,4 +70,3 @@ def format_agent_prompt(donation: Donation) -> str:
         f"</untrusted_donor_input>\n\n"
         f"Execute autonomous coordination according to pipeline specifications."
     )
-

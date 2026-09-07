@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Regular expression for sanitizing and validating standardized phone numbers
 E164_PHONE_REGEX: re.Pattern[str] = re.compile(r"^\+?[1-9]\d{6,14}$")
@@ -123,9 +123,7 @@ class Recipient(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     recipient_id: str = Field(..., min_length=1, max_length=128)
-    organization_name: str = Field(
-        ..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH
-    )
+    organization_name: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
     contact_name: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
     contact_phone: str = Field(..., min_length=7, max_length=32)
     address: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
@@ -138,6 +136,22 @@ class Recipient(BaseModel):
     last_checkin_time: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_recipient_fields(cls, data: Any) -> Any:
+        """Normalize legacy or aliased DynamoDB fields for Recipient."""
+        if isinstance(data, dict):
+            data = dict(data)
+            if "organization_name" not in data and "name" in data:
+                data["organization_name"] = data["name"]
+            if "contact_name" not in data or not data.get("contact_name"):
+                data["contact_name"] = data.get("organization_name", "Coordinator")
+            if "contact_phone" not in data and "phone" in data:
+                data["contact_phone"] = data["phone"]
+            if "status" in data and isinstance(data["status"], str):
+                data["status"] = data["status"].upper()
+        return data
 
     @property
     def is_active(self) -> bool:
@@ -168,6 +182,24 @@ class Volunteer(BaseModel):
     max_capacity_kg: float = Field(..., gt=0.0, le=2000.0)
     vehicle_type: str = Field(..., min_length=1, max_length=32)
     service_region: str = Field(..., min_length=1, max_length=64)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_volunteer_fields(cls, data: Any) -> Any:
+        """Normalize legacy or aliased DynamoDB fields for Volunteer."""
+        if isinstance(data, dict):
+            data = dict(data)
+            if "volunteer_name" not in data and "name" in data:
+                data["volunteer_name"] = data["name"]
+            if "max_capacity_kg" not in data and "vehicle_capacity_kg" in data:
+                data["max_capacity_kg"] = data["vehicle_capacity_kg"]
+            if "address" not in data or not data.get("address"):
+                data["address"] = "789 Volunteer Way, Metro Core"
+            if "vehicle_type" not in data or not data.get("vehicle_type"):
+                data["vehicle_type"] = "car"
+            if "status" in data and isinstance(data["status"], str):
+                data["status"] = data["status"].upper()
+        return data
 
     @property
     def is_available(self) -> bool:
@@ -252,9 +284,7 @@ class VolunteerAssignment(BaseModel):
     volunteer_id: str = Field(..., min_length=1, max_length=128)
     recipient_id: str = Field(..., min_length=1, max_length=128)
     status: str = Field(default="assigned", max_length=32)
-    assigned_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    assigned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class NotificationRecipientType(str, Enum):
@@ -287,9 +317,7 @@ class EscalationTicket(BaseModel):
     donation_id: str = Field(..., min_length=1, max_length=128)
     reason: EscalationReason
     details: dict[str, Any] = Field(default_factory=dict)
-    escalated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    escalated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class InfrastructureConsistencyError(RuntimeError):
@@ -408,5 +436,3 @@ class AgentCoreRuntimeResponse(BaseModel):
 
     message_version: str = Field(default="1.0", alias="messageVersion")
     response: dict[str, Any]
-
-

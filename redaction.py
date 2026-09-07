@@ -11,17 +11,19 @@ from typing import Any
 PHONE_REPLACEMENT_PATTERN: re.Pattern[str] = re.compile(
     r"(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?(\d{4})"
 )
-SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset({
-    "phone",
-    "contact_phone",
-    "donor_phone",
-    "address",
-    "street_address",
-    "donor_address",
-    "contact_name",
-    "donor_name",
-    "volunteer_name",
-})
+SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
+    {
+        "phone",
+        "contact_phone",
+        "donor_phone",
+        "address",
+        "street_address",
+        "donor_address",
+        "contact_name",
+        "donor_name",
+        "volunteer_name",
+    }
+)
 
 
 def mask_phone_number(phone_raw: str) -> str:

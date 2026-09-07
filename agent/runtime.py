@@ -28,12 +28,14 @@ _SESSION_MANAGER: AgentSessionManager | None = None
 _MEMORY_STORE: AgentMemoryStore | None = None
 _SQS_CLIENT: Any | None = None
 
-THROTTLING_ERROR_CODES: frozenset[str] = frozenset({
-    "ThrottlingException",
-    "ProvisionedThroughputExceededException",
-    "RequestLimitExceeded",
-    "TooManyRequestsException",
-})
+THROTTLING_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "ThrottlingException",
+        "ProvisionedThroughputExceededException",
+        "RequestLimitExceeded",
+        "TooManyRequestsException",
+    }
+)
 
 
 def get_runtime_dependencies() -> tuple[
@@ -85,9 +87,7 @@ def _extract_parameter(event: dict[str, Any], param_name: str) -> Any:
 
     # 2. Request body JSON properties
     content = (
-        event.get("requestBody", {})
-        .get("content", {})
-        .get("application/json", {})
+        event.get("requestBody", {}).get("content", {}).get("application/json", {})
     )
     for prop in content.get("properties", []):
         if isinstance(prop, dict) and prop.get("name") == param_name:
@@ -159,11 +159,13 @@ def _handle_throttling_fallback(
         try:
             sqs_client.send_message(
                 QueueUrl=config.coordinator_dlq_url,
-                MessageBody=json.dumps({
-                    "error": error_code,
-                    "event": sanitize_payload_for_logging(event),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }),
+                MessageBody=json.dumps(
+                    {
+                        "error": error_code,
+                        "event": sanitize_payload_for_logging(event),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                ),
                 MessageAttributes={
                     "ErrorType": {"DataType": "String", "StringValue": error_code},
                     "ApiPath": {"DataType": "String", "StringValue": api_path},
@@ -267,8 +269,10 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
             service_region = _extract_parameter(event, "service_region") or "metro-core"
             session_mgr.record_donation_outcome(
                 service_region=service_region,
-                quantity_kg=20.0,  # Or extracted from result
+                quantity_kg=20.0,
                 outcome=result.status.value,
+                recipient_id=result.matched_recipient_id,
+                volunteer_id=result.assigned_volunteer_id,
             )
 
             return _build_bedrock_response(
@@ -333,12 +337,25 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
         LOGGER.exception(
             "Downstream AWS service error during runtime execution: %s", exc
         )
+        err_msg = exc.response.get("Error", {}).get("Message", str(exc))
+        if code == "TransactionCanceledException":
+            reasons = exc.response.get("CancellationReasons", [])
+            reason_details = []
+            for idx, r in enumerate(reasons):
+                r_code = r.get("Code", "None")
+                r_msg = r.get("Message", "")
+                if r_msg:
+                    reason_details.append(f"Item {idx} [{r_code}]: {r_msg}")
+                else:
+                    reason_details.append(f"Item {idx} [{r_code}]")
+            if reason_details:
+                err_msg = f"{err_msg} -> Details: [{'; '.join(reason_details)}]"
         return _build_bedrock_response(
             action_group=action_group,
             api_path=api_path,
             http_method=http_method,
             status_code=500,
-            body_data={"error": f"Internal service error: {code}"},
+            body_data={"error": f"Internal service error: {code} - {err_msg}"},
         )
     except Exception as exc:
         LOGGER.exception("Unhandled runtime error: %s", exc)

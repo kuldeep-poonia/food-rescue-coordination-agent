@@ -117,10 +117,11 @@ def test_escalation_on_no_match_within_window() -> None:
     )
     mock_donations.get_donation.return_value = donation
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.flag_for_human") as mock_flag:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.flag_for_human") as mock_flag,
+    ):
         mock_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-nomatch-01",
@@ -141,8 +142,7 @@ def test_escalation_on_no_match_within_window() -> None:
         assert result.status == DonationStatus.ESCALATED
         assert result.escalation_ticket is not None
         assert (
-            result.escalation_ticket.reason
-            == EscalationReason.NO_MATCH_WITHIN_WINDOW
+            result.escalation_ticket.reason == EscalationReason.NO_MATCH_WITHIN_WINDOW
         )
 
 
@@ -171,14 +171,15 @@ def test_escalation_on_recipient_claim_conflict() -> None:
         reason="Good fit",
     )
 
-    mock_donations.claim_and_deduct_recipient.side_effect = (
-        DonationClaimConflictError("Donation don-conflict-01 already claimed")
+    mock_donations.claim_and_deduct_recipient.side_effect = DonationClaimConflictError(
+        "Donation don-conflict-01 already claimed"
     )
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.flag_for_human") as mock_flag:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.flag_for_human") as mock_flag,
+    ):
         mock_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-conflict-01",
@@ -199,8 +200,7 @@ def test_escalation_on_recipient_claim_conflict() -> None:
         assert result.status == DonationStatus.ESCALATED
         assert result.escalation_ticket is not None
         assert (
-            result.escalation_ticket.reason
-            == EscalationReason.RECIPIENT_CLAIM_CONFLICT
+            result.escalation_ticket.reason == EscalationReason.RECIPIENT_CLAIM_CONFLICT
         )
 
 
@@ -225,8 +225,7 @@ def test_escalation_on_input_validation_failure() -> None:
         assert result.status == DonationStatus.ESCALATED
         assert result.escalation_ticket is not None
         assert (
-            result.escalation_ticket.reason
-            == EscalationReason.INPUT_VALIDATION_FAILURE
+            result.escalation_ticket.reason == EscalationReason.INPUT_VALIDATION_FAILURE
         )
 
 
@@ -263,12 +262,13 @@ def test_zero_false_positives_on_clean_match() -> None:
 
     mock_donations.claim_and_deduct_recipient.return_value = True
 
-    with mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap, \
-         mock.patch("agent.orchestrator.find_best_match") as mock_match, \
-         mock.patch("agent.orchestrator.assign_volunteer") as mock_assign, \
-         mock.patch("agent.orchestrator.send_notification"), \
-         mock.patch("agent.orchestrator.flag_for_human") as mock_flag:
-
+    with (
+        mock.patch("agent.orchestrator.get_recipient_capacity") as mock_cap,
+        mock.patch("agent.orchestrator.find_best_match") as mock_match,
+        mock.patch("agent.orchestrator.assign_volunteer") as mock_assign,
+        mock.patch("agent.orchestrator.send_notification"),
+        mock.patch("agent.orchestrator.flag_for_human") as mock_flag,
+    ):
         mock_cap.return_value = []
         mock_match.return_value = MatchResult(
             donation_id="don-clean-01",

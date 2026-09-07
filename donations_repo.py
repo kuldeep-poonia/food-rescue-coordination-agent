@@ -6,6 +6,7 @@ and updating surplus food donation records.
 
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from boto3.dynamodb.conditions import Key
@@ -30,8 +31,9 @@ from models import (
 )
 from recipients_repo import InsufficientCapacityError
 from redaction import sanitize_payload_for_logging
+from tools.logging_utils import get_structured_logger
 
-LOGGER: logging.Logger = logging.getLogger(__name__)
+LOGGER: logging.Logger = get_structured_logger(__name__)
 
 
 def compute_date_status(
@@ -45,6 +47,16 @@ def compute_date_status(
     dt = transition_time or datetime.now(timezone.utc)
     return f"{dt.strftime('%Y-%m-%d')}#{status.value}"
 
+
+def _to_dynamodb_friendly(val: Any) -> Any:
+    """Recursively convert float types to Decimal for DynamoDB serialization."""
+    if isinstance(val, float):
+        return Decimal(str(val))
+    if isinstance(val, dict):
+        return {k: _to_dynamodb_friendly(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_to_dynamodb_friendly(v) for v in val]
+    return val
 
 
 class DonationClaimConflictError(Exception):
@@ -67,9 +79,7 @@ class DonationsRepository:
         """
         self._config: AppConfig = config or load_app_configuration()
         if dynamodb_resource is not None:
-            self._table = dynamodb_resource.Table(
-                self._config.donations_table_name
-            )
+            self._table = dynamodb_resource.Table(self._config.donations_table_name)
             meta = getattr(dynamodb_resource, "meta", None)
             client = getattr(meta, "client", None) if meta else None
             self._client: Any = client if client is not None else dynamodb_resource
@@ -78,7 +88,7 @@ class DonationsRepository:
 
             dynamo = boto3.resource("dynamodb", region_name=self._config.aws_region)
             self._table = dynamo.Table(self._config.donations_table_name)
-            self._client = dynamo.meta.client
+            self._client = boto3.client("dynamodb", region_name=self._config.aws_region)
 
     @with_dynamodb_retry
     def create_donation(self, donation: Donation) -> None:
@@ -125,13 +135,10 @@ class DonationsRepository:
             ClientError: If DynamoDB query fails after retries.
         """
         response = self._table.get_item(
-            Key={"donation_id": donation_id},
-            ConsistentRead=consistent_read,
+            Key={"donation_id": donation_id}, ConsistentRead=consistent_read
         )
         item = response.get("Item")
-        if not item:
-            return None
-        return Donation.model_validate(item)
+        return Donation.model_validate(item) if item else None
 
     @with_dynamodb_retry
     def claim_donation(self, donation_id: str, recipient_id: str) -> bool:
@@ -153,29 +160,33 @@ class DonationsRepository:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         date_status = compute_date_status(DonationStatus.MATCHED, now)
+
         try:
+            update_expr = (
+                "SET matched_recipient_id = :recipient_id, "
+                "#st = :matched_status, #ua = :now, #ds = :date_status"
+            )
+            cond_expr = (
+                "attribute_exists(donation_id) AND "
+                "attribute_not_exists(matched_recipient_id) AND "
+                "(#st = :reported_status OR #st = :reported_upper)"
+            )
             self._table.update_item(
                 Key={"donation_id": donation_id},
-                UpdateExpression=(
-                    "SET matched_recipient_id = :recipient_id, "
-                    "#st = :matched_status, "
-                    "date_status = :date_status, "
-                    "updated_at = :now"
-                ),
-                ConditionExpression=(
-                    "attribute_exists(donation_id) AND "
-                    "attribute_not_exists(matched_recipient_id) AND "
-                    "#st = :reported_status"
-                ),
+                UpdateExpression=update_expr,
+                ConditionExpression=cond_expr,
                 ExpressionAttributeNames={
                     "#st": "status",
+                    "#ua": "updated_at",
+                    "#ds": "date_status",
                 },
                 ExpressionAttributeValues={
                     ":recipient_id": recipient_id,
                     ":matched_status": DonationStatus.MATCHED.value,
                     ":reported_status": DonationStatus.REPORTED.value,
-                    ":date_status": date_status,
+                    ":reported_upper": "REPORTED",
                     ":now": now_iso,
+                    ":date_status": date_status,
                 },
             )
             LOGGER.info(
@@ -214,29 +225,34 @@ class DonationsRepository:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         date_status = compute_date_status(DonationStatus.ASSIGNED, now)
+
         try:
+            update_expr = (
+                "SET #avi = :volunteer_id, #st = :assigned_status, "
+                "#ua = :now, #ds = :date_status"
+            )
+            cond_expr = (
+                "attribute_exists(donation_id) AND "
+                "attribute_not_exists(#avi) AND "
+                "(#st = :matched_status OR #st = :matched_upper)"
+            )
             self._table.update_item(
                 Key={"donation_id": donation_id},
-                UpdateExpression=(
-                    "SET assigned_volunteer_id = :volunteer_id, "
-                    "#st = :assigned_status, "
-                    "date_status = :date_status, "
-                    "updated_at = :now"
-                ),
-                ConditionExpression=(
-                    "attribute_exists(donation_id) AND "
-                    "attribute_not_exists(assigned_volunteer_id) AND "
-                    "#st = :matched_status"
-                ),
+                UpdateExpression=update_expr,
+                ConditionExpression=cond_expr,
                 ExpressionAttributeNames={
                     "#st": "status",
+                    "#avi": "assigned_volunteer_id",
+                    "#ua": "updated_at",
+                    "#ds": "date_status",
                 },
                 ExpressionAttributeValues={
                     ":volunteer_id": volunteer_id,
                     ":assigned_status": DonationStatus.ASSIGNED.value,
                     ":matched_status": DonationStatus.MATCHED.value,
-                    ":date_status": date_status,
+                    ":matched_upper": "MATCHED",
                     ":now": now_iso,
+                    ":date_status": date_status,
                 },
             )
             return True
@@ -265,29 +281,33 @@ class DonationsRepository:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         date_status = compute_date_status(DonationStatus.REPORTED, now)
+
         try:
+            update_expr = (
+                "SET #st = :reported_status, #ua = :now, "
+                "#ds = :date_status REMOVE matched_recipient_id"
+            )
+            cond_expr = (
+                "attribute_exists(donation_id) AND "
+                "matched_recipient_id = :recipient_id AND "
+                "(#st = :matched_status OR #st = :matched_upper)"
+            )
             self._table.update_item(
                 Key={"donation_id": donation_id},
-                UpdateExpression=(
-                    "SET #st = :reported_status, "
-                    "date_status = :date_status, "
-                    "updated_at = :now "
-                    "REMOVE matched_recipient_id"
-                ),
-                ConditionExpression=(
-                    "attribute_exists(donation_id) AND "
-                    "matched_recipient_id = :recipient_id AND "
-                    "#st = :matched_status"
-                ),
+                UpdateExpression=update_expr,
+                ConditionExpression=cond_expr,
                 ExpressionAttributeNames={
                     "#st": "status",
+                    "#ua": "updated_at",
+                    "#ds": "date_status",
                 },
                 ExpressionAttributeValues={
                     ":recipient_id": recipient_id,
                     ":reported_status": DonationStatus.REPORTED.value,
                     ":matched_status": DonationStatus.MATCHED.value,
-                    ":date_status": date_status,
+                    ":matched_upper": "MATCHED",
                     ":now": now_iso,
+                    ":date_status": date_status,
                 },
             )
             LOGGER.info(
@@ -332,57 +352,64 @@ class DonationsRepository:
         now_iso = now.isoformat()
         date_status = compute_date_status(DonationStatus.MATCHED, now)
         token = build_idempotency_key(donation_id, "claim_and_deduct")
+        LOGGER.info(
+            "Atomic claim starting: donation=%s, recipient=%s, qty=%.2f, table=%s",
+            donation_id,
+            recipient_id,
+            quantity_kg,
+            self._config.recipients_table_name,
+        )
+
+        target_key = {"donation_id": {"S": donation_id}}
+        transact_items = [
+            {
+                "Update": {
+                    "TableName": self._config.donations_table_name,
+                    "Key": target_key,
+                    "UpdateExpression": (
+                        "SET matched_recipient_id = :recipient_id, "
+                        "#st = :matched_status, #ua = :now, #ds = :date_status"
+                    ),
+                    "ConditionExpression": (
+                        "attribute_exists(donation_id) AND "
+                        "attribute_not_exists(matched_recipient_id) AND "
+                        "(#st = :reported_status OR #st = :reported_upper)"
+                    ),
+                    "ExpressionAttributeNames": {
+                        "#st": "status",
+                        "#ua": "updated_at",
+                        "#ds": "date_status",
+                    },
+                    "ExpressionAttributeValues": {
+                        ":recipient_id": {"S": recipient_id},
+                        ":matched_status": {"S": DonationStatus.MATCHED.value},
+                        ":reported_status": {"S": DonationStatus.REPORTED.value},
+                        ":reported_upper": {"S": "REPORTED"},
+                        ":now": {"S": now_iso},
+                        ":date_status": {"S": date_status},
+                    },
+                }
+            },
+            {
+                "Update": {
+                    "TableName": self._config.recipients_table_name,
+                    "Key": {"recipient_id": {"S": recipient_id}},
+                    "UpdateExpression": (
+                        "SET capacity_kg_remaining = capacity_kg_remaining - :qty"
+                    ),
+                    "ConditionExpression": (
+                        "attribute_exists(recipient_id) AND "
+                        "capacity_kg_remaining >= :qty"
+                    ),
+                    "ExpressionAttributeValues": {":qty": {"N": str(quantity_kg)}},
+                }
+            },
+        ]
+
         try:
             self._client.transact_write_items(
                 ClientRequestToken=token,
-                TransactItems=[
-                    {
-                        "Update": {
-                            "TableName": self._config.donations_table_name,
-                            "Key": {"donation_id": {"S": donation_id}},
-                            "UpdateExpression": (
-                                "SET matched_recipient_id = :recipient_id, "
-                                "#st = :matched_status, "
-                                "date_status = :date_status, "
-                                "updated_at = :now"
-                            ),
-                            "ConditionExpression": (
-                                "attribute_exists(donation_id) AND "
-                                "attribute_not_exists(matched_recipient_id) AND "
-                                "#st = :reported_status"
-                            ),
-                            "ExpressionAttributeNames": {"#st": "status"},
-                            "ExpressionAttributeValues": {
-                                ":recipient_id": {"S": recipient_id},
-                                ":matched_status": {
-                                    "S": DonationStatus.MATCHED.value
-                                },
-                                ":reported_status": {
-                                    "S": DonationStatus.REPORTED.value
-                                },
-                                ":date_status": {"S": date_status},
-                                ":now": {"S": now_iso},
-                            },
-                        }
-                    },
-                    {
-                        "Update": {
-                            "TableName": self._config.recipients_table_name,
-                            "Key": {"recipient_id": {"S": recipient_id}},
-                            "UpdateExpression": (
-                                "SET capacity_kg_remaining = "
-                                "capacity_kg_remaining - :qty"
-                            ),
-                            "ConditionExpression": (
-                                "attribute_exists(recipient_id) AND "
-                                "capacity_kg_remaining >= :qty"
-                            ),
-                            "ExpressionAttributeValues": {
-                                ":qty": {"N": str(quantity_kg)},
-                            },
-                        }
-                    },
-                ],
+                TransactItems=transact_items,
             )
             LOGGER.info(
                 "Atomic claim and deduct succeeded for donation %s, recipient %s",
@@ -392,10 +419,35 @@ class DonationsRepository:
             return True
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
+            if code == "IdempotentParameterMismatchException":
+                import uuid
+
+                refreshed_token = uuid.uuid4().hex
+                LOGGER.warning(
+                    "IdempotentParameterMismatchException on %s: "
+                    "retrying with refreshed token %s",
+                    token,
+                    refreshed_token,
+                )
+                self._client.transact_write_items(
+                    ClientRequestToken=refreshed_token,
+                    TransactItems=transact_items,
+                )
+                return True
             if code == "TransactionCanceledException":
                 reasons = exc.response.get("CancellationReasons", [])
                 code_0 = reasons[0].get("Code") if len(reasons) > 0 else None
+                msg_0 = reasons[0].get("Message") if len(reasons) > 0 else ""
                 code_1 = reasons[1].get("Code") if len(reasons) > 1 else None
+                msg_1 = reasons[1].get("Message") if len(reasons) > 1 else ""
+
+                LOGGER.error(
+                    "TransactWriteItems cancelled: Item 0 [%s: %s], Item 1 [%s: %s]",
+                    code_0,
+                    msg_0,
+                    code_1,
+                    msg_1,
+                )
 
                 # Priority rule: Donation claim invariant takes precedence
                 if code_0 == "ConditionalCheckFailed":
@@ -438,54 +490,56 @@ class DonationsRepository:
         now_iso = now.isoformat()
         date_status = compute_date_status(DonationStatus.REPORTED, now)
         token = build_idempotency_key(donation_id, "unclaim_and_restore")
+
+        target_key = {"donation_id": {"S": donation_id}}
+        transact_items = [
+            {
+                "Update": {
+                    "TableName": self._config.donations_table_name,
+                    "Key": target_key,
+                    "UpdateExpression": (
+                        "SET #st = :reported_status, #ua = :now, "
+                        "#ds = :date_status REMOVE matched_recipient_id"
+                    ),
+                    "ConditionExpression": (
+                        "attribute_exists(donation_id) AND "
+                        "matched_recipient_id = :recipient_id AND "
+                        "(#st = :matched_status OR #st = :matched_upper)"
+                    ),
+                    "ExpressionAttributeNames": {
+                        "#st": "status",
+                        "#ua": "updated_at",
+                        "#ds": "date_status",
+                    },
+                    "ExpressionAttributeValues": {
+                        ":recipient_id": {"S": recipient_id},
+                        ":reported_status": {"S": DonationStatus.REPORTED.value},
+                        ":matched_status": {"S": DonationStatus.MATCHED.value},
+                        ":matched_upper": {"S": "MATCHED"},
+                        ":now": {"S": now_iso},
+                        ":date_status": {"S": date_status},
+                    },
+                }
+            },
+            {
+                "Update": {
+                    "TableName": self._config.recipients_table_name,
+                    "Key": {"recipient_id": {"S": recipient_id}},
+                    "UpdateExpression": (
+                        "SET capacity_kg_remaining = capacity_kg_remaining + :qty"
+                    ),
+                    "ConditionExpression": "attribute_exists(recipient_id)",
+                    "ExpressionAttributeValues": {
+                        ":qty": {"N": str(quantity_kg)},
+                    },
+                }
+            },
+        ]
+
         try:
             self._client.transact_write_items(
                 ClientRequestToken=token,
-                TransactItems=[
-                    {
-                        "Update": {
-                            "TableName": self._config.donations_table_name,
-                            "Key": {"donation_id": {"S": donation_id}},
-                            "UpdateExpression": (
-                                "SET #st = :reported_status, "
-                                "date_status = :date_status, "
-                                "updated_at = :now "
-                                "REMOVE matched_recipient_id"
-                            ),
-                            "ConditionExpression": (
-                                "attribute_exists(donation_id) AND "
-                                "matched_recipient_id = :recipient_id AND "
-                                "#st = :matched_status"
-                            ),
-                            "ExpressionAttributeNames": {"#st": "status"},
-                            "ExpressionAttributeValues": {
-                                ":recipient_id": {"S": recipient_id},
-                                ":reported_status": {
-                                    "S": DonationStatus.REPORTED.value
-                                },
-                                ":matched_status": {
-                                    "S": DonationStatus.MATCHED.value
-                                },
-                                ":date_status": {"S": date_status},
-                                ":now": {"S": now_iso},
-                            },
-                        }
-                    },
-                    {
-                        "Update": {
-                            "TableName": self._config.recipients_table_name,
-                            "Key": {"recipient_id": {"S": recipient_id}},
-                            "UpdateExpression": (
-                                "SET capacity_kg_remaining = "
-                                "capacity_kg_remaining + :qty"
-                            ),
-                            "ConditionExpression": "attribute_exists(recipient_id)",
-                            "ExpressionAttributeValues": {
-                                ":qty": {"N": str(quantity_kg)},
-                            },
-                        }
-                    },
-                ],
+                TransactItems=transact_items,
             )
             LOGGER.info(
                 "Atomic unclaim and restore succeeded for donation %s, recipient %s",
@@ -495,6 +549,21 @@ class DonationsRepository:
             return True
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
+            if code == "IdempotentParameterMismatchException":
+                import uuid
+
+                refreshed_token = uuid.uuid4().hex
+                LOGGER.warning(
+                    "IdempotentParameterMismatchException on %s: "
+                    "retrying with refreshed token %s",
+                    token,
+                    refreshed_token,
+                )
+                self._client.transact_write_items(
+                    ClientRequestToken=refreshed_token,
+                    TransactItems=transact_items,
+                )
+                return True
             if code == "TransactionCanceledException":
                 reasons = exc.response.get("CancellationReasons", [])
                 code_0 = reasons[0].get("Code") if len(reasons) > 0 else None
@@ -543,18 +612,24 @@ class DonationsRepository:
         now_iso = now.isoformat()
         date_status = compute_date_status(DonationStatus.ESCALATED, now)
 
-        cond = (
-            "attribute_exists(donation_id) AND "
-            "(#st IN (:reported_status, :matched_status) OR #st = :escalated_status)"
-        )
+        cond_parts = [
+            "attribute_exists(donation_id)",
+            (
+                "(#st IN (:reported_status, :reported_upper, "
+                ":matched_status, :matched_upper) OR #st = :escalated_status)"
+            ),
+        ]
         exp_vals: dict[str, Any] = {
             ":reported_status": DonationStatus.REPORTED.value,
+            ":reported_upper": "REPORTED",
             ":matched_status": DonationStatus.MATCHED.value,
+            ":matched_upper": "MATCHED",
             ":escalated_status": DonationStatus.ESCALATED.value,
             ":reason": reason.value,
-            ":date_status": date_status,
             ":now": now_iso,
+            ":date_status": date_status,
         }
+
         if current_status is not None:
             if current_status not in (
                 DonationStatus.REPORTED,
@@ -565,20 +640,27 @@ class DonationsRepository:
                     f"Cannot escalate donation {donation_id} in "
                     f"{current_status.value} state"
                 )
-            cond += " AND #st = :expected_status"
+            cond_parts.append("(#st = :expected_status OR #st = :expected_upper)")
             exp_vals[":expected_status"] = current_status.value
+            exp_vals[":expected_upper"] = current_status.value.upper()
+
+        condition_expr = " AND ".join(cond_parts)
 
         try:
+            update_expr = (
+                "SET #st = :escalated_status, #er = :reason, "
+                "#ua = :now, #ds = :date_status"
+            )
             self._table.update_item(
                 Key={"donation_id": donation_id},
-                UpdateExpression=(
-                    "SET #st = :escalated_status, "
-                    "escalation_reason = :reason, "
-                    "date_status = :date_status, "
-                    "updated_at = :now"
-                ),
-                ConditionExpression=cond,
-                ExpressionAttributeNames={"#st": "status"},
+                UpdateExpression=update_expr,
+                ConditionExpression=condition_expr,
+                ExpressionAttributeNames={
+                    "#st": "status",
+                    "#er": "escalation_reason",
+                    "#ua": "updated_at",
+                    "#ds": "date_status",
+                },
                 ExpressionAttributeValues=exp_vals,
             )
             LOGGER.info(
@@ -634,14 +716,33 @@ class DonationsRepository:
             ClientError: If DynamoDB GSI query fails after retries.
         """
         date_prefix = f"{date_str}#"
-        response = self._table.query(
-            IndexName="region-date-status-index",
-            KeyConditionExpression=(
-                Key("service_region").eq(service_region)
-                & Key("date_status").begins_with(date_prefix)
-            ),
-        )
-        items = response.get("Items", [])
+        try:
+            response = self._table.query(
+                IndexName="region-date-status-index",
+                KeyConditionExpression=(
+                    Key("service_region").eq(service_region)
+                    & Key("date_status").begins_with(date_prefix)
+                ),
+            )
+            items = response.get("Items", [])
+        except ClientError as exc:
+            err_msg = exc.response.get("Error", {}).get("Message", "")
+            code = exc.response.get("Error", {}).get("Code", "")
+            if (
+                "The table does not have the specified index" in err_msg
+                or code == "ValidationException"
+            ):
+                from boto3.dynamodb.conditions import Attr
+
+                response = self._table.scan(
+                    FilterExpression=(
+                        Attr("service_region").eq(service_region)
+                        & Attr("date_status").begins_with(date_prefix)
+                    )
+                )
+                items = response.get("Items", [])
+            else:
+                raise
         fulfilled_statuses = {
             DonationStatus.ASSIGNED.value,
             DonationStatus.DELIVERED.value,
@@ -672,4 +773,3 @@ class DonationsRepository:
             organizations_served=len(matched_orgs),
             donations_count=fulfilled_count,
         )
-

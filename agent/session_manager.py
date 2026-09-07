@@ -228,7 +228,6 @@ class AgentSessionManager:
         ]
         exp_vals: dict[str, Any] = {
             ":one": 1,
-            ":zero": 0,
             ":qty": Decimal(str(round(quantity_kg, 2))),
             ":now": now_iso,
         }
@@ -253,6 +252,7 @@ class AgentSessionManager:
         # Maintain advisory volunteer workload distribution
         if volunteer_id:
             exp_names["#vol"] = volunteer_id
+            exp_vals[":zero"] = 0
             set_clauses.append(
                 "recent_volunteer_assignments.#vol = "
                 "if_not_exists(recent_volunteer_assignments.#vol, :zero) + :one"
