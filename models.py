@@ -92,6 +92,7 @@ class Donation(BaseModel):
     coordinator_notification_status: CoordinatorNotificationStatus | None = None
     coordinator_notification_claimed_at: datetime | None = None
     coordinator_notification_claim_id: str | None = None
+    tracking_token_hash: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -146,6 +147,7 @@ class Recipient(BaseModel):
     dietary_exclusions: list[str] = Field(default_factory=list)
     status: RecipientStatus = RecipientStatus.ACTIVE
     service_region: str = Field(..., min_length=1, max_length=64)
+    auth_token_hash: str | None = None
     last_checkin_time: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -195,6 +197,7 @@ class Volunteer(BaseModel):
     max_capacity_kg: float = Field(..., gt=0.0, le=2000.0)
     vehicle_type: str = Field(..., min_length=1, max_length=32)
     service_region: str = Field(..., min_length=1, max_length=64)
+    auth_token_hash: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -473,3 +476,114 @@ class AgentCoreRuntimeResponse(BaseModel):
 
     message_version: str = Field(default="1.0", alias="messageVersion")
     response: dict[str, Any]
+
+
+# ------------------------------------------------------------------------------
+# Frontend & API Request / Response Schemas
+# ------------------------------------------------------------------------------
+class DonationReportRequest(BaseModel):
+    """Payload submitted by a donor reporting surplus food."""
+
+    model_config = ConfigDict(frozen=True)
+
+    donor_id: str = Field(..., min_length=1, max_length=128)
+    donor_name: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
+    donor_phone: str = Field(..., min_length=7, max_length=32)
+    donor_address: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
+    donor_coordinates: Coordinates
+    food_category: FoodCategory
+    quantity_kg: float = Field(..., gt=0.0, le=5000.0)
+    ready_by: datetime
+    perishability_hours: float = Field(..., gt=0.0, le=168.0)
+    service_region: str = Field(default="metro-core", min_length=1, max_length=64)
+
+
+class DonationCreationResponse(BaseModel):
+    """Response returned to donor upon successful report with plaintext token."""
+
+    model_config = ConfigDict(frozen=True)
+
+    donation_id: str
+    tracking_token: str
+    status: DonationStatus
+    service_region: str
+    ready_by: datetime
+    created_at: datetime
+
+
+class DonationTrackingResponse(BaseModel):
+    """Safe redacted tracking view returned to authenticated donor."""
+
+    model_config = ConfigDict(frozen=True)
+
+    donation_id: str
+    status: DonationStatus
+    food_category: str
+    quantity_kg: float
+    ready_by: datetime
+    service_region: str
+    matched_recipient_name: str | None = None
+    assigned_volunteer_name: str | None = None
+    escalation_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecipientCapacityUpdateRequest(BaseModel):
+    """Payload submitted by a partner organization updating capacity."""
+
+    model_config = ConfigDict(frozen=True)
+
+    capacity_kg_remaining: float = Field(..., ge=0.0, le=10000.0)
+    dietary_requirements: list[str] = Field(default_factory=list)
+    dietary_exclusions: list[str] = Field(default_factory=list)
+    status: RecipientStatus = RecipientStatus.ACTIVE
+
+
+class VolunteerAvailabilityUpdateRequest(BaseModel):
+    """Payload submitted by a volunteer updating availability."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: VolunteerStatus
+    max_capacity_kg: float | None = Field(default=None, gt=0.0, le=2000.0)
+    vehicle_type: str | None = Field(default=None, min_length=1, max_length=32)
+
+
+class VolunteerAssignmentView(BaseModel):
+    """Redacted assignment view displayed to assigned volunteer."""
+
+    model_config = ConfigDict(frozen=True)
+
+    assignment_id: str
+    donation_id: str
+    pickup_address: str
+    pickup_coordinates: Coordinates
+    delivery_organization: str
+    quantity_kg: float
+    food_category: str
+    ready_by: datetime
+
+
+class CoordinatorResolutionRequest(BaseModel):
+    """Payload submitted by coordinator to resolve an escalated donation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    resolution_action: str = Field(
+        ..., pattern=r"^(assign_recipient|assign_volunteer|dismiss)$"
+    )
+    target_id: str | None = None
+    notes: str = Field(..., min_length=1, max_length=MAX_TEXT_FIELD_LENGTH)
+
+
+class PublicImpactSummary(BaseModel):
+    """Aggregated public metrics for reporting and frontend summary cards."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total_kg_routed: float
+    meals_equivalent: float
+    organizations_served: int
+    active_volunteers: int
+    last_updated: datetime
