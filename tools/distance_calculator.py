@@ -8,6 +8,14 @@ import math
 from typing import Any, Protocol
 
 from models import Coordinates
+from tools.logging_utils import get_structured_logger
+
+LOGGER = get_structured_logger(__name__)
+
+
+class LocationServiceUnavailableError(Exception):
+    """Raised when Amazon Location Service is unavailable or degraded without fallback.
+    """
 
 
 class DistanceCalculator(Protocol):
@@ -77,6 +85,7 @@ class AmazonLocationDistanceCalculator:
         location_client: Any | None = None,
         calculator_name: str = "frca-route-calculator-placeholder",
         fallback_calculator: DistanceCalculator | None = None,
+        allow_fallback: bool = False,
     ) -> None:
         """Initialize with optional boto3 client and fallback calculator.
 
@@ -84,10 +93,14 @@ class AmazonLocationDistanceCalculator:
             location_client: Optional boto3 LocationService client.
             calculator_name: Target AWS RouteCalculator resource identifier.
             fallback_calculator: Backup calculator if AWS API is unavailable.
+            allow_fallback: If False (strict production default), raises
+                LocationServiceUnavailableError on failure instead of silently
+                falling back to geodesic straight-line distance.
         """
         self._client = location_client
         self._calculator_name = calculator_name
         self._fallback = fallback_calculator or GeodesicDistanceCalculator()
+        self._allow_fallback = allow_fallback
 
     def calculate_distance_km(
         self, origin: Coordinates, destination: Coordinates
@@ -100,6 +113,10 @@ class AmazonLocationDistanceCalculator:
 
         Returns:
             Distance in kilometers.
+
+        Raises:
+            LocationServiceUnavailableError: When AWS API fails and allow_fallback
+                is False.
         """
         if self._client is not None:
             try:
@@ -112,8 +129,26 @@ class AmazonLocationDistanceCalculator:
                 summary = response.get("Summary", {})
                 distance_km = summary.get("Distance", 0.0)
                 return round(float(distance_km), 2)
-            except Exception:
-                # Degrade safely to geodesic fallback when AWS service is unreachable
-                return self._fallback.calculate_distance_km(origin, destination)
+            except Exception as exc:
+                if self._allow_fallback:
+                    LOGGER.warning(
+                        "Amazon Location Service error (%s); degrading to fallback",
+                        exc.__class__.__name__,
+                    )
+                    return self._fallback.calculate_distance_km(origin, destination)
+                LOGGER.error(
+                    "Amazon Location Service unavailable (%s); routing failed",
+                    exc.__class__.__name__,
+                )
+                err_msg = (
+                    f"Amazon Location Service route calculation failed: "
+                    f"{exc.__class__.__name__}"
+                )
+                raise LocationServiceUnavailableError(err_msg) from exc
 
-        return self._fallback.calculate_distance_km(origin, destination)
+        if self._allow_fallback:
+            return self._fallback.calculate_distance_km(origin, destination)
+
+        raise LocationServiceUnavailableError(
+            "Amazon Location Service client is not configured and fallback is disabled"
+        )
