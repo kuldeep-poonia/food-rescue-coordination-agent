@@ -15,8 +15,9 @@ from config import AppConfig, load_app_configuration
 from dynamodb_retry import with_dynamodb_retry
 from models import MemoryEntry
 from redaction import sanitize_payload_for_logging
+from tools.logging_utils import get_structured_logger
 
-LOGGER: logging.Logger = logging.getLogger(__name__)
+LOGGER: logging.Logger = get_structured_logger(__name__)
 
 VALID_ENTITY_TYPES: frozenset[str] = frozenset({"donor", "recipient"})
 
