@@ -6,6 +6,7 @@ via SQS Dead-Letter Queue (DLQ) upon downstream throttling.
 """
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,7 +18,7 @@ from agent.session_manager import AgentSessionManager
 from config import AppConfig, load_app_configuration
 from models import AgentCoreRuntimeResponse
 from redaction import sanitize_payload_for_logging
-from tools.logging_utils import get_structured_logger
+from tools.logging_utils import CORRELATION_ID_CONTEXT, get_structured_logger
 
 LOGGER = get_structured_logger(__name__)
 
@@ -206,6 +207,15 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
         Structured response dictionary.
     """
     del context
+    headers = event.get("headers") if isinstance(event.get("headers"), dict) else {}
+    cid = (
+        headers.get("x-correlation-id")
+        or headers.get("X-Correlation-Id")
+        or event.get("sessionId")
+        or f"rt-{uuid.uuid4().hex[:12]}"
+    )
+    CORRELATION_ID_CONTEXT.set(str(cid))
+
     config, orchestrator, session_mgr, memory_store, sqs = get_runtime_dependencies()
 
     # 1. EventBridge Scheduled Trigger: Check unmatched donations for ready_by
