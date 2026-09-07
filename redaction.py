@@ -11,6 +11,10 @@ from typing import Any
 PHONE_REPLACEMENT_PATTERN: re.Pattern[str] = re.compile(
     r"(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?(\d{4})"
 )
+STREET_ADDRESS_PATTERN: re.Pattern[str] = re.compile(
+    r"\b\d{1,6}\s+[A-Za-z0-9\s.,#-]+?\b(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Plaza|Plz|Suite|Ste|Apt)\b[^\n,]*",
+    re.IGNORECASE,
+)
 SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
     {
         "phone",
@@ -107,3 +111,26 @@ def sanitize_payload_for_logging(data: dict[str, Any]) -> dict[str, Any]:
             sanitized[key] = value
 
     return sanitized
+
+
+def sanitize_text_for_logging(text: str) -> str:
+    """Sanitize raw text strings by masking inline phone numbers and addresses.
+
+    Args:
+        text: Input log message or arbitrary string.
+
+    Returns:
+        String with phone numbers and street premises redacted.
+    """
+    if not text:
+        return text
+
+    def _phone_sub(match: re.Match[str]) -> str:
+        raw: str = match.group(0)
+        digits: str = re.sub(r"\D", "", raw)
+        if len(digits) >= 7:
+            return mask_phone_number(raw)
+        return raw
+
+    phone_scrubbed: str = PHONE_REPLACEMENT_PATTERN.sub(_phone_sub, text)
+    return STREET_ADDRESS_PATTERN.sub("*** [REDACTED_ADDRESS]", phone_scrubbed)
