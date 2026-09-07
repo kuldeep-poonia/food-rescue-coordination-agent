@@ -6,6 +6,7 @@ to the FrontendApiService handler with trusted socket client IP extraction.
 
 import argparse
 import mimetypes
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -91,20 +92,51 @@ class FrontendDevServerHandler(BaseHTTPRequestHandler):
 
     def _serve_static_asset(self) -> None:
         """Serve HTML, CSS, or JS file from the frontend/ directory."""
-        clean_path = self.path.split("?")[0].lstrip("/")
+        raw_path = self.path.split("?")[0]
+
+        # Iteratively decode percent-encoding to neutralize nested/double encoding
+        decoded_path = urllib.parse.unquote(raw_path)
+        while "%" in decoded_path:
+            new_decoded = urllib.parse.unquote(decoded_path)
+            if new_decoded == decoded_path:
+                break
+            decoded_path = new_decoded
+
+        # Reject null byte injection attacks
+        if "\x00" in decoded_path:
+            self.send_error(400, "Bad Request: Null byte detected")
+            return
+
+        clean_path = decoded_path.lstrip("/")
         if not clean_path or clean_path in ("/", ""):
             clean_path = "index.html"
 
+        # Explicit check for directory traversal segments (e.g. .., ..., ...., /./)
+        path_segments = [p for p in clean_path.replace("\\", "/").split("/") if p]
+        has_dot_traversal = (
+            any(set(p) == {"."} for p in path_segments)
+            or any(".." in p for p in path_segments)
+        )
+        if has_dot_traversal:
+            self.send_error(403, "Access Denied")
+            return
+
         file_path = (self.frontend_dir / clean_path).resolve()
-        # Directory traversal prevention
+        # Directory containment verification
         try:
             file_path.relative_to(self.frontend_dir.resolve())
         except ValueError:
             self.send_error(403, "Access Denied")
             return
 
-        if not file_path.exists() or file_path.is_dir():
-            # SPA fallback: route to index.html
+        if not file_path.exists():
+            # For missing assets with extensions, return 404 (do not leak index.html)
+            if file_path.suffix and file_path.suffix != ".html":
+                self.send_error(404, "File Not Found")
+                return
+            # SPA fallback: route client-side paths to index.html
+            file_path = self.frontend_dir / "index.html"
+        elif file_path.is_dir():
             file_path = self.frontend_dir / "index.html"
 
         if not file_path.exists():
