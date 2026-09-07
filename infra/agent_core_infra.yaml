@@ -72,6 +72,15 @@ Resources:
                 - bedrock.amazonaws.com
             Action: sts:AssumeRole
       Policies:
+        - PolicyName: BedrockInvokeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}"
         - PolicyName: DynamoDBAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -81,7 +90,6 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
                   - dynamodb:UpdateItem
-                  - dynamodb:DeleteItem
                   - dynamodb:Query
                   - dynamodb:Scan
                 Resource:
@@ -122,7 +130,9 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-agent-core-*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-agent-core-*:*"
 
   # 4. AgentCore Runtime Lambda Function
   AgentCoreRuntimeFunction:
@@ -195,6 +205,398 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt TimeWindowCheckScheduleRule.Arn
 
+  # 9. Dedicated IAM Role for Frontend API Gateway Proxy Lambda
+  FrontendApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "frca-frontend-api-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FrontendApiDynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-donations-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-donations-${EnvironmentName}/index/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-recipients-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-recipients-${EnvironmentName}/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-volunteers-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-volunteers-${EnvironmentName}/index/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}/index/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt SessionsMemoryTable.Arn
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-frontend-api-*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-frontend-api-*:*"
+
+  # 10. Dedicated IAM Role for Notification Tool Lambda
+  NotificationToolRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "frca-notification-tool-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SNSPublishAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref NotificationTopic
+                  - !Ref CoordinatorEscalationTopic
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-notification-*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-notification-*:*"
+
+  # 11. Dedicated IAM Role for Distance Calculator Tool Lambda
+  DistanceCalculatorToolRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "frca-distance-tool-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AmazonLocationRouteAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - geo:CalculateRoute
+                Resource:
+                  - !Sub "arn:aws:geo:${AWS::Region}:${AWS::AccountId}:route-calculator/*"
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-distance-*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-distance-*:*"
+
+  # 12. Dedicated IAM Role for Capacity Query Tool Lambda
+  CapacityQueryToolRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "frca-capacity-tool-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RecipientCapacityReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-recipients-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-recipients-${EnvironmentName}/index/*"
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-capacity-*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-capacity-*:*"
+
+  # 13. Dedicated IAM Role for Volunteer Dispatch Tool Lambda
+  VolunteerDispatchToolRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "frca-volunteer-tool-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VolunteerAssignmentAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-volunteers-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-volunteers-${EnvironmentName}/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-donations-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-donations-${EnvironmentName}/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}/index/*"
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-volunteer-*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/frca-volunteer-*:*"
+
+  # 14. CloudWatch Metric Filter for Security Auth Violations
+  AuthViolationMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/frca-frontend-api-${EnvironmentName}"
+      FilterPattern: '"AUTH_VIOLATION"'
+      MetricTransformations:
+        - MetricNamespace: "FRCA/Security"
+          MetricName: "AuthViolationCount"
+          MetricValue: "1"
+
+  # 15. CloudWatch Monitoring Dashboard
+  CloudWatchMonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "frca-operational-dashboard-${EnvironmentName}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "frca-agent-core-runtime-${EnvironmentName}" ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "Throttles", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Lambda Invocations, Errors & Throttles"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "frca-agent-core-runtime-${EnvironmentName}", { "stat": "Average" } ],
+                  [ "...", { "stat": "p90" } ],
+                  [ "...", { "stat": "p99" } ]
+                ],
+                "period": 300,
+                "region": "${AWS::Region}",
+                "title": "Lambda Latency Percentiles (p90, p99)"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "frca-coordinator-dlq-${EnvironmentName}" ]
+                ],
+                "period": 60,
+                "stat": "Maximum",
+                "region": "${AWS::Region}",
+                "title": "Coordinator Dead-Letter Queue Depth"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "frca-donations-${EnvironmentName}" ],
+                  [ ".", "ConsumedWriteCapacityUnits", ".", "." ],
+                  [ ".", "ConsumedReadCapacityUnits", "TableName", "frca-sessions-memory-${EnvironmentName}" ],
+                  [ ".", "ConsumedWriteCapacityUnits", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "DynamoDB Consumed Capacity Units (RCU/WCU)"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/DynamoDB", "ReadThrottleEvents", "TableName", "frca-donations-${EnvironmentName}" ],
+                  [ ".", "WriteThrottleEvents", ".", "." ],
+                  [ ".", "ReadThrottleEvents", "TableName", "frca-sessions-memory-${EnvironmentName}" ],
+                  [ ".", "WriteThrottleEvents", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "DynamoDB Read/Write Throttle Events"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "FRCA/Security", "AuthViolationCount" ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Security Auth Violations"
+              }
+            }
+          ]
+        }
+
+  # 16. CloudWatch Alarm for DLQ Non-Empty
+  DLQMessagesVisibleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "frca-dlq-messages-visible-${EnvironmentName}"
+      AlarmDescription: "Alerts when Coordinator Dead-Letter Queue has visible messages"
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt CoordinatorDLQ.QueueName
+      AlarmActions:
+        - !Ref CoordinatorEscalationTopic
+
+  # 17. CloudWatch Alarm for Runtime Errors
+  RuntimeErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "frca-runtime-error-rate-${EnvironmentName}"
+      AlarmDescription: "Alerts when AgentCore Runtime Lambda encounters execution errors"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AgentCoreRuntimeFunction
+      AlarmActions:
+        - !Ref CoordinatorEscalationTopic
+
+  # 18. CloudWatch Alarm for Auth Violation Surges
+  AuthViolationSurgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "frca-auth-violation-surge-${EnvironmentName}"
+      AlarmDescription: "Alerts when unauthorized access attempts surge (>= 5 in 5 minutes)"
+      MetricName: AuthViolationCount
+      Namespace: "FRCA/Security"
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref CoordinatorEscalationTopic
+
 Outputs:
   SessionsMemoryTableName:
     Description: "Name of the DynamoDB table for ephemeral sessions and long-term memory"
@@ -231,3 +633,40 @@ Outputs:
     Value: !GetAtt AgentCoreRuntimeFunction.Arn
     Export:
       Name: !Sub "${AWS::StackName}-AgentCoreRuntimeFunctionArn"
+
+  FrontendApiRoleArn:
+    Description: "ARN of the IAM Role for Frontend API Gateway Proxy Lambda"
+    Value: !GetAtt FrontendApiRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-FrontendApiRoleArn"
+
+  NotificationToolRoleArn:
+    Description: "ARN of the IAM Role for Notification Tool Lambda"
+    Value: !GetAtt NotificationToolRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-NotificationToolRoleArn"
+
+  DistanceCalculatorToolRoleArn:
+    Description: "ARN of the IAM Role for Distance Calculator Tool Lambda"
+    Value: !GetAtt DistanceCalculatorToolRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-DistanceCalculatorToolRoleArn"
+
+  CapacityQueryToolRoleArn:
+    Description: "ARN of the IAM Role for Capacity Query Tool Lambda"
+    Value: !GetAtt CapacityQueryToolRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-CapacityQueryToolRoleArn"
+
+  VolunteerDispatchToolRoleArn:
+    Description: "ARN of the IAM Role for Volunteer Dispatch Tool Lambda"
+    Value: !GetAtt VolunteerDispatchToolRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-VolunteerDispatchToolRoleArn"
+
+  CloudWatchMonitoringDashboardName:
+    Description: "Name of the CloudWatch Operational Monitoring Dashboard"
+    Value: !Ref CloudWatchMonitoringDashboard
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudWatchMonitoringDashboardName"
+
