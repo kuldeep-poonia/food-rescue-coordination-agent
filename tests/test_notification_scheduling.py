@@ -30,6 +30,7 @@ from config import AppConfig
 from donations_repo import DonationsRepository
 from models import (
     Coordinates,
+    CoordinatorNotificationStatus,
     Donation,
     DonationStatus,
     EscalationReason,
@@ -546,3 +547,473 @@ def test_bounded_fallback_scan_pagination() -> None:
     for r in results:
         assert r.service_region == "metro-core"
         assert r.status == DonationStatus.REPORTED
+
+
+# ------------------------------------------------------------------------------
+# Test 6: Concurrent Notification Claim Mutual Exclusion
+# ------------------------------------------------------------------------------
+def test_concurrent_notification_claim_mutual_exclusion() -> None:
+    """Verify pre-dispatch claim ensures only 1 worker publishes to SNS."""
+    mock_table = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.Table.return_value = mock_table
+    mock_sns = mock.MagicMock()
+
+    config = AppConfig(
+        aws_region="us-east-1",
+        donations_table_name="frca-donations-test",
+        recipients_table_name="frca-recipients-test",
+        volunteers_table_name="frca-volunteers-test",
+        matches_audit_table_name="frca-matches-audit-test",
+        sessions_memory_table_name="frca-sessions-test",
+        notification_topic_arn="arn:aws:sns:us-east-1:123456789012:notif",
+        coordinator_escalation_topic_arn="arn:aws:sns:us-east-1:123456789012:escl",
+        coordinator_dlq_url="https://sqs.us-east-1.amazonaws.com/123456789012/dlq",
+        location_place_index_name="index",
+        route_calculator_name="calc",
+        bedrock_agent_id="agent",
+        bedrock_agent_alias_id="alias",
+    )
+    d_repo = DonationsRepository(dynamodb_resource=mock_resource, config=config)
+    a_repo = AuditRepository(dynamodb_resource=mock_resource, config=config)
+
+    now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    donation = Donation(
+        donation_id="don-claim-race-01",
+        donor_id="donor-01",
+        donor_name="Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Main St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=25.0,
+        ready_by=now + timedelta(hours=2),
+        perishability_hours=4.0,
+        service_region="metro-core",
+        status=DonationStatus.ESCALATED,
+        coordinator_notification_status=CoordinatorNotificationStatus.PENDING,
+    )
+
+    orchestrator = StrandsOrchestrator(
+        donations_repo=d_repo,
+        audit_repo=a_repo,
+        config=config,
+        sns_client=mock_sns,
+    )
+
+    lock = threading.Lock()
+    first_claimed = False
+
+    def side_effect_update(**kwargs: Any) -> dict[str, Any]:
+        nonlocal first_claimed
+        # Only gate the claim operation (which transitions to CLAIMED)
+        if ":claimed_status" in kwargs.get("ExpressionAttributeValues", {}):
+            with lock:
+                if not first_claimed:
+                    first_claimed = True
+                    return {}
+                raise ClientError(
+                    {
+                        "Error": {"Code": "ConditionalCheckFailedException"},
+                        "Message": "The conditional request failed",
+                    },
+                    "UpdateItem",
+                )
+        return {}
+
+    mock_table.update_item.side_effect = side_effect_update
+
+    # Two concurrent workers attempt to dispatch the coordinator alert
+    results: list[bool] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(
+            orchestrator._dispatch_coordinator_escalation_alert,
+            donation,
+            correlation_id="worker-A",
+        )
+        f2 = executor.submit(
+            orchestrator._dispatch_coordinator_escalation_alert,
+            donation,
+            correlation_id="worker-B",
+        )
+        for f in concurrent.futures.as_completed([f1, f2]):
+            results.append(f.result())
+
+    # Invariant: Exactly 1 worker claimed and dispatched; other cleanly failed claim
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+    # Critical invariant: SNS publish was called EXACTLY ONCE across parallel workers!
+    assert mock_sns.publish.call_count == 1
+
+
+# ------------------------------------------------------------------------------
+# Test 7: Crash Recovery After Claimed with Active vs Expired Lease
+# ------------------------------------------------------------------------------
+def test_crash_recovery_after_claim_lease_expired() -> None:
+    """Verify active lease prevents duplicate dispatch; expired lease enables recovery.
+    """
+    mock_table = mock.MagicMock()
+
+    mock_resource = mock.MagicMock()
+    mock_resource.Table.return_value = mock_table
+    mock_sns = mock.MagicMock()
+
+    config = AppConfig(
+        aws_region="us-east-1",
+        donations_table_name="frca-donations-test",
+        recipients_table_name="frca-recipients-test",
+        volunteers_table_name="frca-volunteers-test",
+        matches_audit_table_name="frca-matches-audit-test",
+        sessions_memory_table_name="frca-sessions-test",
+        notification_topic_arn="arn:aws:sns:us-east-1:123456789012:notif",
+        coordinator_escalation_topic_arn="arn:aws:sns:us-east-1:123456789012:escl",
+        coordinator_dlq_url="https://sqs.us-east-1.amazonaws.com/123456789012/dlq",
+        location_place_index_name="index",
+        route_calculator_name="calc",
+        bedrock_agent_id="agent",
+        bedrock_agent_alias_id="alias",
+        notification_claim_lease_seconds=120,
+    )
+    d_repo = DonationsRepository(dynamodb_resource=mock_resource, config=config)
+    a_repo = AuditRepository(dynamodb_resource=mock_resource, config=config)
+    orchestrator = StrandsOrchestrator(
+        donations_repo=d_repo,
+        audit_repo=a_repo,
+        config=config,
+        sns_client=mock_sns,
+    )
+
+    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    base_donation = Donation(
+        donation_id="don-lease-01",
+        donor_id="donor-01",
+        donor_name="Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Main St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=25.0,
+        ready_by=t0 + timedelta(hours=2),
+        perishability_hours=4.0,
+        service_region="metro-core",
+        status=DonationStatus.ESCALATED,
+        coordinator_notification_status=CoordinatorNotificationStatus.CLAIMED,
+        coordinator_notification_claimed_at=t0,
+        coordinator_notification_claim_id="clm-crashed-worker",
+    )
+
+    # Scenario A: Lease still active (only 30 seconds elapsed, lease=120s)
+    # DynamoDB condition check fails because claimed_at > expired_threshold
+    mock_table.update_item.side_effect = ClientError(
+        {
+            "Error": {"Code": "ConditionalCheckFailedException"},
+            "Message": "Active lease held",
+        },
+        "UpdateItem",
+    )
+    res_active = orchestrator._dispatch_coordinator_escalation_alert(
+        base_donation, correlation_id="reconciler-active"
+    )
+    assert res_active is False
+    assert mock_sns.publish.call_count == 0  # Zero dispatch!
+
+    # Scenario B: Lease expired (150 seconds elapsed, lease=120s)
+    # DynamoDB condition passes, allowing reclamation
+    mock_table.update_item.side_effect = None
+    mock_table.update_item.return_value = {}
+
+    res_expired = orchestrator._dispatch_coordinator_escalation_alert(
+        base_donation, correlation_id="reconciler-expired"
+    )
+    assert res_expired is True
+    assert mock_sns.publish.call_count == 1  # Successfully recovered and dispatched!
+
+
+# ------------------------------------------------------------------------------
+# Test 8: Ambiguous Transport Timeout Preserves CLAIMED State
+# ------------------------------------------------------------------------------
+def test_ambiguous_transport_timeout_preserves_claimed_state() -> None:
+    """Verify socket/read timeout preserves CLAIMED status instead of resetting."""
+    mock_table = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.Table.return_value = mock_table
+    mock_sns = mock.MagicMock()
+
+    # Simulate ambiguous socket/read timeout after SNS accepted request
+    mock_sns.publish.side_effect = TimeoutError("Socket connection timed out")
+
+    config = AppConfig(
+        aws_region="us-east-1",
+        donations_table_name="frca-donations-test",
+        recipients_table_name="frca-recipients-test",
+        volunteers_table_name="frca-volunteers-test",
+        matches_audit_table_name="frca-matches-audit-test",
+        sessions_memory_table_name="frca-sessions-test",
+        notification_topic_arn="arn:aws:sns:us-east-1:123456789012:notif",
+        coordinator_escalation_topic_arn="arn:aws:sns:us-east-1:123456789012:escl",
+        coordinator_dlq_url="https://sqs.us-east-1.amazonaws.com/123456789012/dlq",
+        location_place_index_name="index",
+        route_calculator_name="calc",
+        bedrock_agent_id="agent",
+        bedrock_agent_alias_id="alias",
+    )
+    d_repo = DonationsRepository(dynamodb_resource=mock_resource, config=config)
+    a_repo = AuditRepository(dynamodb_resource=mock_resource, config=config)
+    orchestrator = StrandsOrchestrator(
+        donations_repo=d_repo,
+        audit_repo=a_repo,
+        config=config,
+        sns_client=mock_sns,
+    )
+
+    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    donation = Donation(
+        donation_id="don-ambiguous-01",
+        donor_id="donor-01",
+        donor_name="Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Main St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=25.0,
+        ready_by=t0 + timedelta(hours=2),
+        perishability_hours=4.0,
+        service_region="metro-core",
+        status=DonationStatus.ESCALATED,
+        coordinator_notification_status=CoordinatorNotificationStatus.PENDING,
+    )
+
+    # Claim succeeds
+    mock_table.update_item.return_value = {}
+
+    success = orchestrator._dispatch_coordinator_escalation_alert(
+        donation, correlation_id="trace-ambiguous"
+    )
+
+    # Dispatch reported False due to timeout
+    assert success is False
+    # Verify update_item was called ONLY once (for claim acquisition)
+    # and was NOT called to reset to PENDING or mark DELIVERED/FAILED
+    assert mock_table.update_item.call_count == 1
+    claim_call_kwargs = mock_table.update_item.call_args[1]
+    assert ":claimed_status" in claim_call_kwargs["ExpressionAttributeValues"]
+
+
+# ------------------------------------------------------------------------------
+# Test 9: Already DELIVERED Safe No-Op
+# ------------------------------------------------------------------------------
+def test_already_delivered_notification_safe_noop() -> None:
+    """Verify records already marked DELIVERED do not trigger SNS or DB mutations."""
+    mock_table = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.Table.return_value = mock_table
+    mock_sns = mock.MagicMock()
+
+    config = AppConfig(
+        aws_region="us-east-1",
+        donations_table_name="frca-donations-test",
+        recipients_table_name="frca-recipients-test",
+        volunteers_table_name="frca-volunteers-test",
+        matches_audit_table_name="frca-matches-audit-test",
+        sessions_memory_table_name="frca-sessions-test",
+        notification_topic_arn="arn:aws:sns:us-east-1:123456789012:notif",
+        coordinator_escalation_topic_arn="arn:aws:sns:us-east-1:123456789012:escl",
+        coordinator_dlq_url="https://sqs.us-east-1.amazonaws.com/123456789012/dlq",
+        location_place_index_name="index",
+        route_calculator_name="calc",
+        bedrock_agent_id="agent",
+        bedrock_agent_alias_id="alias",
+    )
+    d_repo = DonationsRepository(dynamodb_resource=mock_resource, config=config)
+    a_repo = AuditRepository(dynamodb_resource=mock_resource, config=config)
+    orchestrator = StrandsOrchestrator(
+        donations_repo=d_repo,
+        audit_repo=a_repo,
+        config=config,
+        sns_client=mock_sns,
+    )
+
+    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    donation = Donation(
+        donation_id="don-delivered-01",
+        donor_id="donor-01",
+        donor_name="Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Main St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=25.0,
+        ready_by=t0 + timedelta(hours=2),
+        perishability_hours=4.0,
+        service_region="metro-core",
+        status=DonationStatus.ESCALATED,
+        coordinator_notification_status=CoordinatorNotificationStatus.DELIVERED,
+    )
+
+    result = orchestrator._dispatch_coordinator_escalation_alert(
+        donation, correlation_id="reconciler-check"
+    )
+
+    assert result is True
+    assert mock_sns.publish.call_count == 0
+    assert mock_table.update_item.call_count == 0
+
+
+# ------------------------------------------------------------------------------
+# Test 10: Permanent SNS Failure Transitions to FAILED
+# ------------------------------------------------------------------------------
+def test_permanent_sns_failure_transitions_to_failed() -> None:
+    """Verify non-retryable 4xx ClientError transitions notification to FAILED."""
+    mock_table = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.Table.return_value = mock_table
+    mock_sns = mock.MagicMock()
+
+    # 4xx permanent failure
+    mock_sns.publish.side_effect = ClientError(
+        {
+            "Error": {
+                "Code": "InvalidParameterException",
+                "Message": "Invalid topic destination",
+            }
+        },
+        "Publish",
+    )
+
+    config = AppConfig(
+        aws_region="us-east-1",
+        donations_table_name="frca-donations-test",
+        recipients_table_name="frca-recipients-test",
+        volunteers_table_name="frca-volunteers-test",
+        matches_audit_table_name="frca-matches-audit-test",
+        sessions_memory_table_name="frca-sessions-test",
+        notification_topic_arn="arn:aws:sns:us-east-1:123456789012:notif",
+        coordinator_escalation_topic_arn="arn:aws:sns:us-east-1:123456789012:escl",
+        coordinator_dlq_url="https://sqs.us-east-1.amazonaws.com/123456789012/dlq",
+        location_place_index_name="index",
+        route_calculator_name="calc",
+        bedrock_agent_id="agent",
+        bedrock_agent_alias_id="alias",
+    )
+    d_repo = DonationsRepository(dynamodb_resource=mock_resource, config=config)
+    a_repo = AuditRepository(dynamodb_resource=mock_resource, config=config)
+    orchestrator = StrandsOrchestrator(
+        donations_repo=d_repo,
+        audit_repo=a_repo,
+        config=config,
+        sns_client=mock_sns,
+    )
+
+    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    donation = Donation(
+        donation_id="don-failed-01",
+        donor_id="donor-01",
+        donor_name="Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Main St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=25.0,
+        ready_by=t0 + timedelta(hours=2),
+        perishability_hours=4.0,
+        service_region="metro-core",
+        status=DonationStatus.ESCALATED,
+        coordinator_notification_status=CoordinatorNotificationStatus.PENDING,
+    )
+
+    mock_table.update_item.return_value = {}
+
+    result = orchestrator._dispatch_coordinator_escalation_alert(
+        donation, correlation_id="reconciler-failed"
+    )
+
+    assert result is False
+    # First update: claim (PENDING -> CLAIMED)
+    # Second update: mark failed (CLAIMED -> FAILED)
+    assert mock_table.update_item.call_count == 2
+    failed_kwargs = mock_table.update_item.call_args[1]
+    assert failed_kwargs["ExpressionAttributeValues"][":failed_status"] == "FAILED"
+    # Verify audit event COORDINATOR_ALERT_FAILED recorded
+    mock_audit_table = mock_resource.Table("frca-matches-audit-test")
+    assert mock_audit_table.put_item.call_count >= 1
+    audit_item = mock_audit_table.put_item.call_args[1]["Item"]
+    assert audit_item["action"] == "COORDINATOR_ALERT_FAILED"
+
+
+# ------------------------------------------------------------------------------
+# Test 11: Privacy & Bounded Query Limits in Outbox Recovery
+# ------------------------------------------------------------------------------
+def test_recovery_audit_and_bounded_query_privacy() -> None:
+    """Verify recovery queries strictly respect limits and audit logs omit raw PII."""
+    mock_table = mock.MagicMock()
+    mock_resource = mock.MagicMock()
+    mock_resource.Table.return_value = mock_table
+
+    config = AppConfig(
+        aws_region="us-east-1",
+        donations_table_name="frca-donations-test",
+        recipients_table_name="frca-recipients-test",
+        volunteers_table_name="frca-volunteers-test",
+        matches_audit_table_name="frca-matches-audit-test",
+        sessions_memory_table_name="frca-sessions-test",
+        notification_topic_arn="arn:aws:sns:us-east-1:123456789012:notif",
+        coordinator_escalation_topic_arn="arn:aws:sns:us-east-1:123456789012:escl",
+        coordinator_dlq_url="https://sqs.us-east-1.amazonaws.com/123456789012/dlq",
+        location_place_index_name="index",
+        route_calculator_name="calc",
+        bedrock_agent_id="agent",
+        bedrock_agent_alias_id="alias",
+    )
+    repo = DonationsRepository(dynamodb_resource=mock_resource, config=config)
+
+    # GSI raises ValidationException, triggering bounded fallback scan
+    mock_table.query.side_effect = ClientError(
+        {"Error": {"Code": "ValidationException", "Message": "Index not found"}},
+        "Query",
+    )
+
+    t0_iso = "2026-09-07T12:00:00+00:00"
+    future_iso = "2026-09-07T14:00:00+00:00"
+    scanned_items = [
+        {
+            "donation_id": f"don-recov-{i}",
+            "donor_id": "donor-01",
+            "donor_name": "Bakery",
+            "donor_phone": "+12125550199",
+            "donor_address": "123 Main St",
+            "donor_coordinates": {"latitude": 40.71, "longitude": -74.00},
+            "food_category": "bakery",
+            "quantity_kg": 20.0,
+            "ready_by": future_iso,
+            "perishability_hours": 24.0,
+            "status": "escalated",
+            "service_region": "metro-core",
+            "coordinator_notification_status": "PENDING",
+            "created_at": t0_iso,
+            "updated_at": t0_iso,
+        }
+        for i in range(15)
+    ]
+
+    mock_table.scan.return_value = {
+        "Items": scanned_items,
+        "ScannedCount": 15,
+        "LastEvaluatedKey": None,
+    }
+
+    # Query with strict limit of 5 items
+    results = repo.query_pending_coordinator_notifications(
+        service_region="metro-core",
+        limit=5,
+        max_evaluated_items=50,
+    )
+
+    # Invariant: Strictly bounded to requested limit
+    assert len(results) == 5
+    for item in results:
+        assert item.status == DonationStatus.ESCALATED
+        assert (
+            item.coordinator_notification_status
+            == CoordinatorNotificationStatus.PENDING
+        )
+
