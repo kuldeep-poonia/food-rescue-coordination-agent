@@ -103,8 +103,11 @@ def check_rate_limit(
         else cfg.rate_limit_general_per_minute
     )
 
-    current_minute = int(time.time() // 60)
-    window_ttl = int(time.time()) + 120  # 2 minute auto-cleanup TTL
+    now = time.time()
+    current_minute = int(now // 60)
+    window_ttl = int(now) + 120  # 2 minute auto-cleanup TTL
+    # Dynamically compute remaining seconds until the current 1-minute window resets
+    retry_after = max(1, int(((current_minute + 1) * 60) - now))
 
     pk = f"RATELIMIT#{tier.upper()}#{source_ip}"
     sk = f"WINDOW#{current_minute}"
@@ -138,7 +141,7 @@ def check_rate_limit(
                 count,
                 max_limit,
             )
-            return False, 60
+            return False, retry_after
         return True, 0
     except ClientError as exc:
         LOGGER.error("Rate limiter DynamoDB error: %s; failing safe", exc)
