@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
@@ -12,6 +13,25 @@ from redaction import sanitize_payload_for_logging, sanitize_text_for_logging
 CORRELATION_ID_CONTEXT: ContextVar[str] = ContextVar(
     "correlation_id", default="unassigned"
 )
+
+
+def sanitize_correlation_id(raw_cid: Any) -> str:
+    """Sanitize and bound correlation IDs to prevent log pollution or injection.
+
+    Restricts to safe identifier characters (alphanumeric, dash, underscore)
+    and bounds maximum length to 64 characters.
+
+    Args:
+        raw_cid: Untrusted or incoming correlation ID string/object.
+
+    Returns:
+        Cleaned, bounded correlation ID string.
+    """
+    if not raw_cid:
+        return "unassigned"
+    cid_str = str(raw_cid).strip()
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "", cid_str)[:64]
+    return cleaned or "unassigned"
 
 
 class StructuredJsonFormatter(logging.Formatter):
@@ -26,7 +46,8 @@ class StructuredJsonFormatter(logging.Formatter):
         Returns:
             JSON-serialized log message string.
         """
-        correlation_id = getattr(record, "correlation_id", CORRELATION_ID_CONTEXT.get())
+        raw_cid = getattr(record, "correlation_id", CORRELATION_ID_CONTEXT.get())
+        correlation_id = sanitize_correlation_id(raw_cid)
         tool_name = getattr(record, "tool_name", record.name)
         raw_message = record.getMessage()
         clean_message = sanitize_text_for_logging(raw_message)
@@ -45,7 +66,14 @@ class StructuredJsonFormatter(logging.Formatter):
             payload["details"] = sanitize_payload_for_logging(record.details)
 
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            raw_exc = self.formatException(record.exc_info)
+            payload["exception"] = sanitize_text_for_logging(raw_exc)
+        elif getattr(record, "exc_text", None):
+            payload["exception"] = sanitize_text_for_logging(record.exc_text)
+
+        if getattr(record, "stack_info", None):
+            raw_stack = self.formatStack(record.stack_info)
+            payload["stack_info"] = sanitize_text_for_logging(raw_stack)
 
         return json.dumps(payload)
 
