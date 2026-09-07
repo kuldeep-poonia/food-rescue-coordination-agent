@@ -46,6 +46,20 @@ DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS: int = 250
 # Notification claim lease duration in seconds for coordinator outbox recovery
 DEFAULT_NOTIFICATION_CLAIM_LEASE_SECONDS: int = 120
 
+# Rate limiting defaults (per minute per trusted source IP)
+RATE_LIMIT_GENERAL_PER_MINUTE: int = 30
+RATE_LIMIT_LOGIN_PER_MINUTE: int = 5
+
+# Coordinator authentication constants
+AUTH_TOKEN_MIN_LENGTH: int = 32
+DEV_LOCAL_COORDINATOR_KEY: str = (
+    "dev-insecure-coordinator-key-for-local-testing-only-32chars"
+)
+
+
+class ConfigurationError(Exception):
+    """Raised when runtime configuration fails validation or security invariants."""
+
 
 
 @dataclass(frozen=True)
@@ -76,6 +90,9 @@ class AppConfig:
     max_unmatched_query_limit: int = DEFAULT_MAX_UNMATCHED_QUERY_LIMIT
     max_fallback_scan_evaluated_items: int = DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS
     notification_claim_lease_seconds: int = DEFAULT_NOTIFICATION_CLAIM_LEASE_SECONDS
+    coordinator_api_key: str = DEV_LOCAL_COORDINATOR_KEY
+    rate_limit_general_per_minute: int = RATE_LIMIT_GENERAL_PER_MINUTE
+    rate_limit_login_per_minute: int = RATE_LIMIT_LOGIN_PER_MINUTE
 
 
 
@@ -86,7 +103,8 @@ def load_app_configuration() -> AppConfig:
         AppConfig: Immutable configuration instance with all required placeholders.
 
     Raises:
-        None: Safe fallbacks are provided for all configurations.
+        ConfigurationError: If production coordinator credentials are missing
+            or default.
     """
     env_name = os.environ.get("ENVIRONMENT")
     if not env_name:
@@ -99,6 +117,22 @@ def load_app_configuration() -> AppConfig:
             env_name = "staging"
 
     suffix = f"-{env_name}" if env_name else "-table"
+
+    # Production coordinator credential enforcement
+    coord_key = os.environ.get("COORDINATOR_API_KEY", "")
+    if env_name in ("prod", "production", "staging"):
+        if not coord_key or coord_key == DEV_LOCAL_COORDINATOR_KEY:
+            raise ConfigurationError(
+                f"COORDINATOR_API_KEY is mandatory in '{env_name}' "
+                "environment and cannot use the development default."
+            )
+        if len(coord_key) < AUTH_TOKEN_MIN_LENGTH:
+            raise ConfigurationError(
+                f"COORDINATOR_API_KEY in '{env_name}' must be at least "
+                f"{AUTH_TOKEN_MIN_LENGTH} characters for production security."
+            )
+    elif not coord_key:
+        coord_key = DEV_LOCAL_COORDINATOR_KEY
 
     return AppConfig(
         aws_region=os.environ.get("AWS_REGION", "us-east-1"),
@@ -170,6 +204,17 @@ def load_app_configuration() -> AppConfig:
             os.environ.get(
                 "NOTIFICATION_CLAIM_LEASE_SECONDS",
                 str(DEFAULT_NOTIFICATION_CLAIM_LEASE_SECONDS),
+            )
+        ),
+        coordinator_api_key=coord_key,
+        rate_limit_general_per_minute=int(
+            os.environ.get(
+                "RATE_LIMIT_GENERAL_PER_MINUTE", str(RATE_LIMIT_GENERAL_PER_MINUTE)
+            )
+        ),
+        rate_limit_login_per_minute=int(
+            os.environ.get(
+                "RATE_LIMIT_LOGIN_PER_MINUTE", str(RATE_LIMIT_LOGIN_PER_MINUTE)
             )
         ),
     )
