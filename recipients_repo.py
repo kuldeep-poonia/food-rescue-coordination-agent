@@ -235,3 +235,62 @@ class RecipientsRepository:
                 )
                 raise KeyError(f"Recipient {recipient_id} does not exist") from exc
             raise
+
+    @with_dynamodb_retry
+    def update_recipient_capacity(
+        self,
+        recipient_id: str,
+        capacity_kg_remaining: float,
+        dietary_requirements: list[str] | None = None,
+        dietary_exclusions: list[str] | None = None,
+        status: RecipientStatus | None = None,
+    ) -> bool:
+        """Update recipient capacity and operational attributes.
+
+        Args:
+            recipient_id: Target recipient identifier.
+            capacity_kg_remaining: New remaining capacity in kg.
+            dietary_requirements: Optional updated dietary preferences.
+            dietary_exclusions: Optional updated dietary exclusions.
+            status: Optional operational status.
+
+        Returns:
+            True if update succeeded.
+
+        Raises:
+            KeyError: If recipient does not exist.
+        """
+        qty_decimal = Decimal(str(capacity_kg_remaining))
+        set_clauses = ["capacity_kg_remaining = :cap"]
+        expr_vals: dict[str, Any] = {":cap": qty_decimal}
+        expr_names: dict[str, str] = {}
+
+        if dietary_requirements is not None:
+            set_clauses.append("dietary_requirements = :dreq")
+            expr_vals[":dreq"] = dietary_requirements
+        if dietary_exclusions is not None:
+            set_clauses.append("dietary_exclusions = :dexc")
+            expr_vals[":dexc"] = dietary_exclusions
+        if status is not None:
+            set_clauses.append("#st = :status")
+            expr_vals[":status"] = status.value
+            expr_names["#st"] = "status"
+
+        update_expr = "SET " + ", ".join(set_clauses)
+        params: dict[str, Any] = {
+            "Key": {"recipient_id": recipient_id},
+            "UpdateExpression": update_expr,
+            "ConditionExpression": "attribute_exists(recipient_id)",
+            "ExpressionAttributeValues": expr_vals,
+        }
+        if expr_names:
+            params["ExpressionAttributeNames"] = expr_names
+
+        try:
+            self._table.update_item(**params)
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "ConditionalCheckFailedException":
+                raise KeyError(f"Recipient {recipient_id} does not exist") from exc
+            raise
