@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
-from redaction import sanitize_payload_for_logging
+from redaction import sanitize_payload_for_logging, sanitize_text_for_logging
 
 # Thread-safe and async-safe context variable for correlation ID propagation
 CORRELATION_ID_CONTEXT: ContextVar[str] = ContextVar(
@@ -28,6 +28,8 @@ class StructuredJsonFormatter(logging.Formatter):
         """
         correlation_id = getattr(record, "correlation_id", CORRELATION_ID_CONTEXT.get())
         tool_name = getattr(record, "tool_name", record.name)
+        raw_message = record.getMessage()
+        clean_message = sanitize_text_for_logging(raw_message)
 
         payload: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -35,7 +37,7 @@ class StructuredJsonFormatter(logging.Formatter):
             "logger": record.name,
             "tool_name": tool_name,
             "correlation_id": correlation_id,
-            "message": record.getMessage(),
+            "message": clean_message,
         }
 
         # Include custom extra details if provided, scrubbing PII
