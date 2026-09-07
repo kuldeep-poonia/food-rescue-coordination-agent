@@ -17,7 +17,7 @@ from models import (
 )
 from tools.distance_calculator import DistanceCalculator, GeodesicDistanceCalculator
 from tools.logging_utils import get_structured_logger
-from tools.send_notification import send_notification
+from tools.send_notification import mask_destination, send_notification
 from volunteers_repo import VolunteersRepository, VolunteerUnavailableError
 
 LOGGER = get_structured_logger(__name__)
@@ -49,6 +49,7 @@ def _dispatch_assignment_notification(
         sns_client=sns_client,
     )
 
+    masked_dest = mask_destination(volunteer.phone)
     notif_audit_event = AuditEvent(
         event_id=f"evt-{uuid.uuid4().hex[:12]}",
         donation_id=donation.donation_id,
@@ -57,7 +58,7 @@ def _dispatch_assignment_notification(
         idempotency_key=f"{donation.donation_id}:notify_volunteer",
         details={
             "recipient_type": NotificationRecipientType.VOLUNTEER.value,
-            "destination": volunteer.phone,
+            "destination": masked_dest,
             "correlation_id": correlation_id,
         },
     )
@@ -195,10 +196,14 @@ def assign_volunteer(
         )
         return None
 
-    # Rank eligible volunteers by proximity to donor location
+    # Rank eligible volunteers by proximity to donor location, with secondary
+    # tie-breaker on volunteer_id for deterministic ordering
     eligible.sort(
-        key=lambda v: calc.calculate_distance_km(
-            donation.donor_coordinates, v.coordinates
+        key=lambda v: (
+            calc.calculate_distance_km(
+                donation.donor_coordinates, v.coordinates
+            ),
+            v.volunteer_id,
         )
     )
 
