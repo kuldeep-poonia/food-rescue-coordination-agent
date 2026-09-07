@@ -36,6 +36,13 @@ DEFAULT_SESSION_TTL_HOURS: int = 24
 # Long-term memory TTL in days for entity operational patterns (30 days)
 DEFAULT_MEMORY_TTL_DAYS: int = 30
 
+# Approaching window in hours: donations with ready_by within 2.0h are routed
+DEFAULT_APPROACHING_WINDOW_HOURS: float = 2.0
+
+# Query limits for unmatched donations retrieval
+DEFAULT_MAX_UNMATCHED_QUERY_LIMIT: int = 50
+DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS: int = 250
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -61,6 +68,9 @@ class AppConfig:
     capacity_warning_threshold_kg: float = CAPACITY_WARNING_THRESHOLD_KG
     session_ttl_hours: int = DEFAULT_SESSION_TTL_HOURS
     memory_ttl_days: int = DEFAULT_MEMORY_TTL_DAYS
+    approaching_window_hours: float = DEFAULT_APPROACHING_WINDOW_HOURS
+    max_unmatched_query_limit: int = DEFAULT_MAX_UNMATCHED_QUERY_LIMIT
+    max_fallback_scan_evaluated_items: int = DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS
 
 
 def load_app_configuration() -> AppConfig:
@@ -133,5 +143,21 @@ def load_app_configuration() -> AppConfig:
         ),
         memory_ttl_days=int(
             os.environ.get("MEMORY_TTL_DAYS", str(DEFAULT_MEMORY_TTL_DAYS))
+        ),
+        approaching_window_hours=float(
+            os.environ.get(
+                "APPROACHING_WINDOW_HOURS", str(DEFAULT_APPROACHING_WINDOW_HOURS)
+            )
+        ),
+        max_unmatched_query_limit=int(
+            os.environ.get(
+                "MAX_UNMATCHED_QUERY_LIMIT", str(DEFAULT_MAX_UNMATCHED_QUERY_LIMIT)
+            )
+        ),
+        max_fallback_scan_evaluated_items=int(
+            os.environ.get(
+                "MAX_FALLBACK_SCAN_EVALUATED_ITEMS",
+                str(DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS),
+            )
         ),
     )
