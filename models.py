@@ -497,6 +497,25 @@ class DonationReportRequest(BaseModel):
     perishability_hours: float = Field(..., gt=0.0, le=168.0)
     service_region: str = Field(default="metro-core", min_length=1, max_length=64)
 
+    @field_validator("donor_phone")
+    @classmethod
+    def validate_phone_number(cls, value: str) -> str:
+        """Validate phone string has appropriate length and character structure."""
+        cleaned = re.sub(r"[\s\-\(\)\.]", "", value)
+        if not E164_PHONE_REGEX.match(cleaned):
+            raise ValueError(f"Invalid phone number format: {value}")
+        return cleaned
+
+    @field_validator("ready_by")
+    @classmethod
+    def validate_ready_by_future(cls, value: datetime) -> datetime:
+        """Verify ready_by timestamp is in the future at request time."""
+        now = datetime.now(timezone.utc)
+        target = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if target <= now:
+            raise ValueError("ready_by timestamp must be in the future")
+        return target
+
 
 class DonationCreationResponse(BaseModel):
     """Response returned to donor upon successful report with plaintext token."""
