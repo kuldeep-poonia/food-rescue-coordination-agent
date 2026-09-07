@@ -870,6 +870,98 @@ class DonationsRepository:
             raise
 
     @with_dynamodb_retry
+    def query_unmatched_donations(
+        self,
+        limit: int | None = None,
+        status: DonationStatus = DonationStatus.REPORTED,
+        service_region: str | None = None,
+        max_evaluated_items: int | None = None,
+    ) -> list[Donation]:
+        """Query donations by status with optional region filter and scan fallback.
+
+        Args:
+            limit: Maximum number of donations to return.
+            status: Target DonationStatus to query (default: REPORTED).
+            service_region: Optional service region filter.
+            max_evaluated_items: Maximum items to evaluate in fallback scan.
+
+        Returns:
+            List of parsed Donation models matching criteria.
+        """
+        effective_limit = limit or self._config.max_unmatched_query_limit
+        effective_max_evaluated = (
+            max_evaluated_items or self._config.max_fallback_scan_evaluated_items
+        )
+        canonical_status = (
+            status.value if isinstance(status, DonationStatus) else str(status)
+        )
+
+        try:
+            from boto3.dynamodb.conditions import Attr, Key
+
+            kwargs: dict[str, Any] = {
+                "IndexName": "status-ready_by-index",
+                "KeyConditionExpression": Key("status").eq(canonical_status),
+                "Limit": effective_limit,
+            }
+            if service_region:
+                kwargs["FilterExpression"] = Attr("service_region").eq(service_region)
+
+            response = self._table.query(**kwargs)
+            items = response.get("Items", [])
+            return [Donation.model_validate(item) for item in items]
+        except ClientError as exc:
+            err_msg = exc.response.get("Error", {}).get("Message", "")
+            code = exc.response.get("Error", {}).get("Code", "")
+            if (
+                "The table does not have the specified index" in err_msg
+                or code == "ValidationException"
+            ):
+                from boto3.dynamodb.conditions import Attr
+
+                matched_donations: list[Donation] = []
+                total_evaluated = 0
+                last_evaluated_key = None
+
+                filter_cond = Attr("status").eq(canonical_status)
+                if service_region:
+                    filter_cond = (
+                        filter_cond & Attr("service_region").eq(service_region)
+                    )
+
+                while (
+                    len(matched_donations) < effective_limit
+                    and total_evaluated < effective_max_evaluated
+                ):
+                    scan_limit = min(
+                        effective_limit - len(matched_donations),
+                        effective_max_evaluated - total_evaluated,
+                        50,
+                    )
+                    scan_kwargs: dict[str, Any] = {
+                        "FilterExpression": filter_cond,
+                        "Limit": max(scan_limit, 1),
+                    }
+                    if last_evaluated_key:
+                        scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
+                    scan_resp = self._table.scan(**scan_kwargs)
+                    evaluated_in_call = scan_resp.get("ScannedCount", 0)
+                    total_evaluated += evaluated_in_call
+
+                    for item in scan_resp.get("Items", []):
+                        matched_donations.append(Donation.model_validate(item))
+                        if len(matched_donations) >= effective_limit:
+                            break
+
+                    last_evaluated_key = scan_resp.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+
+                return matched_donations
+            raise
+
+    @with_dynamodb_retry
     def escalate_missed_window_transaction(
         self,
         donation_id: str,
