@@ -13,12 +13,17 @@ Covers:
 10. Cross-Role Data Leak Prevention.
 11. Server-Side Validation Rejection (negative qty, past ready_by, invalid phone).
 12. Coordinator Manual Override & Audit Trail Verification.
+13. AUTH_VIOLATION audit record persistence in DynamoDB.
+14. Static development server path traversal prevention.
 """
 
 import hashlib
+import http.client
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
+from http.server import HTTPServer
 from typing import Any
 from unittest import mock
 
@@ -46,6 +51,7 @@ from models import (
     Volunteer,
 )
 from recipients_repo import RecipientsRepository
+from server import FrontendDevServerHandler
 from volunteers_repo import VolunteersRepository
 
 
@@ -777,3 +783,157 @@ def test_coordinator_manual_resolution() -> None:
     audit_item = audit_call[1]["Item"]
     assert audit_item["action"] == "COORDINATOR_MANUAL_RESOLUTION"
     assert "Verified food-safety window" in str(audit_item["details"])
+
+
+# ------------------------------------------------------------------------------
+# 13. AUTH_VIOLATION Audit Trail Persistence Verification
+# ------------------------------------------------------------------------------
+def test_auth_violation_audit_record_persisted_in_dynamodb() -> None:
+    """Verify unauthorized access attempts persist structured AUTH_VIOLATION records."""
+    service, mock_d_table, mock_r_table, _, mock_a_table, _ = create_mock_service()
+
+    # Case A: Donor endpoint with mismatched tracking token
+    don = Donation(
+        donation_id="don-sec-01",
+        donor_id="donor-1",
+        donor_name="Bakery",
+        donor_phone="+12125550199",
+        donor_address="100 Main St",
+        donor_coordinates=Coordinates(latitude=40.71, longitude=-74.00),
+        food_category=FoodCategory.BAKERY,
+        quantity_kg=15.0,
+        ready_by=datetime.now(timezone.utc) + timedelta(hours=3),
+        perishability_hours=6.0,
+        service_region="metro-core",
+        status=DonationStatus.REPORTED,
+        tracking_token_hash=hashlib.sha256(b"correct-token").hexdigest(),
+    )
+    mock_d_table.get_item.return_value = {"Item": don.model_dump(mode="json")}
+
+    res_donor = service.handle_request(
+        {
+            "httpMethod": "GET",
+            "path": "/api/donations/don-sec-01",
+            "headers": {"X-Tracking-Token": "invalid-attacker-token"},
+            "client_ip": "198.51.100.77",
+        }
+    )
+    assert res_donor["statusCode"] == 403
+
+    # Assert audit record persisted in DynamoDB audit table
+    assert mock_a_table.put_item.called
+    latest_call = mock_a_table.put_item.call_args[1]["Item"]
+    assert latest_call["action"] == "AUTH_VIOLATION"
+    assert latest_call["actor"] == "unauthorized_client"
+    assert latest_call["donation_id"] == "SYSTEM_SECURITY"
+    assert latest_call["details"]["source_ip"] == "198.51.100.77"
+    assert latest_call["details"]["target_resource"] == "donation:don-sec-01"
+    assert latest_call["details"]["violation_type"] == "INVALID_TRACKING_TOKEN"
+
+    # Case B: Coordinator login with wrong credential
+    mock_a_table.reset_mock()
+    res_login = service.handle_request(
+        {
+            "httpMethod": "POST",
+            "path": "/api/coordinator/login",
+            "body": json.dumps({"api_key": "wrong-bad-password"}),
+            "client_ip": "198.51.100.88",
+        }
+    )
+    assert res_login["statusCode"] == 401
+    assert mock_a_table.put_item.called
+    login_call = mock_a_table.put_item.call_args[1]["Item"]
+    assert login_call["action"] == "AUTH_VIOLATION"
+    assert login_call["details"]["source_ip"] == "198.51.100.88"
+    assert login_call["details"]["target_resource"] == "coordinator_login"
+    assert login_call["details"]["violation_type"] == "FAILED_COORDINATOR_LOGIN"
+
+    # Case C: Recipient capacity update with invalid token
+    mock_a_table.reset_mock()
+    rec = Recipient(
+        recipient_id="rec-sec-01",
+        organization_name="Shelter",
+        contact_name="Alice",
+        contact_phone="+12125550199",
+        address="200 Shelter Way",
+        coordinates=Coordinates(latitude=40.72, longitude=-74.01),
+        capacity_kg_remaining=100.0,
+        service_region="metro-core",
+        auth_token_hash=hashlib.sha256(b"correct-rec-token").hexdigest(),
+    )
+    mock_r_table.get_item.return_value = {"Item": rec.model_dump(mode="json")}
+
+    res_rec = service.handle_request(
+        {
+            "httpMethod": "POST",
+            "path": "/api/recipients/rec-sec-01/capacity",
+            "headers": {"X-Recipient-Token": "bad-rec-token"},
+            "body": json.dumps({"capacity_kg_remaining": 50.0}),
+            "client_ip": "198.51.100.99",
+        }
+    )
+    assert res_rec["statusCode"] == 403
+    assert mock_a_table.put_item.called
+    rec_call = mock_a_table.put_item.call_args[1]["Item"]
+    assert rec_call["action"] == "AUTH_VIOLATION"
+    assert rec_call["details"]["target_resource"] == "recipient:rec-sec-01"
+    assert rec_call["details"]["violation_type"] == "INVALID_RECIPIENT_TOKEN"
+
+
+# ------------------------------------------------------------------------------
+# 14. Static Development Server Path Traversal Hardcore Defense
+# ------------------------------------------------------------------------------
+def test_static_server_path_traversal_prevention() -> None:
+    """Verify static asset server rejects directory traversal and never leaks files."""
+    server = HTTPServer(("127.0.0.1", 0), FrontendDevServerHandler)
+    host, port = server.server_address
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    try:
+        traversal_attempts = [
+            "/../../config.py",
+            "/..%2f..%2fconfig.py",
+            "/%2e%2e/%2e%2e/config.py",
+            "/%2e%2e%2f%2e%2e%2fconfig.py",
+            "/%252e%252e%252f%252e%252e%252fconfig.py",
+            "/....//....//config.py",
+            "/..\\..\\config.py",
+            "/css/../../config.py",
+            "/index.html%00.png",
+        ]
+
+        for path in traversal_attempts:
+            conn = http.client.HTTPConnection(host, port, timeout=2)
+            conn.request("GET", path)
+            resp = conn.getresponse()
+            body = resp.read().decode("utf-8", errors="ignore")
+            conn.close()
+
+            # Status must be error (400 Bad Request or 403 Forbidden or 404 Not Found)
+            assert resp.status in (400, 403, 404), (
+                f"Expected rejection for {path}, got {resp.status}"
+            )
+
+            # Security critical assertion: sensitive codebase content MUST NEVER leak
+            assert "FOOD_SAFETY_MIN_SHELF_LIFE_MINUTES" not in body, (
+                f"File content leaked for path {path}!"
+            )
+            assert "AppConfig" not in body, f"File content leaked for path {path}!"
+            assert "coordinator_api_key" not in body, (
+                f"File content leaked for path {path}!"
+            )
+
+        # Legitimate asset check: verify valid frontend files serve normally
+        conn = http.client.HTTPConnection(host, port, timeout=2)
+        conn.request("GET", "/css/style.css")
+        resp = conn.getresponse()
+        css_body = resp.read().decode("utf-8", errors="ignore")
+        conn.close()
+        assert resp.status == 200
+        assert resp.getheader("Content-Type") == "text/css"
+        assert "var(--" in css_body or "body" in css_body
+
+    finally:
+        server.shutdown()
+        server.server_close()
