@@ -157,7 +157,7 @@ def verify_token_hash(stored_hash: str | None, incoming_token: str | None) -> bo
     """
     if not stored_hash or not incoming_token:
         return False
-    incoming_hash = hashlib.sha256(incoming_token.strip().encode("utf-8")).hexdigest()
+    incoming_hash = hashlib.sha256(incoming_token.strip().encode()).hexdigest()
     return secrets.compare_digest(stored_hash, incoming_hash)
 
 
@@ -352,27 +352,33 @@ class FrontendApiService:
         donation_id = f"don-{uuid.uuid4().hex[:12]}"
         raw_tracking_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(
-            raw_tracking_token.encode("utf-8")
+            raw_tracking_token.encode()
         ).hexdigest()
 
         now = datetime.now(timezone.utc)
-        donation = Donation(
-            donation_id=donation_id,
-            donor_id=report.donor_id,
-            donor_name=report.donor_name,
-            donor_phone=report.donor_phone,
-            donor_address=report.donor_address,
-            donor_coordinates=report.donor_coordinates,
-            food_category=report.food_category,
-            quantity_kg=report.quantity_kg,
-            ready_by=report.ready_by,
-            perishability_hours=report.perishability_hours,
-            service_region=report.service_region,
-            status=DonationStatus.REPORTED,
-            tracking_token_hash=token_hash,
-            created_at=now,
-            updated_at=now,
-        )
+        try:
+            donation = Donation(
+                donation_id=donation_id,
+                donor_id=report.donor_id,
+                donor_name=report.donor_name,
+                donor_phone=report.donor_phone,
+                donor_address=report.donor_address,
+                donor_coordinates=report.donor_coordinates,
+                food_category=report.food_category,
+                quantity_kg=report.quantity_kg,
+                ready_by=report.ready_by,
+                perishability_hours=report.perishability_hours,
+                service_region=report.service_region,
+                status=DonationStatus.REPORTED,
+                tracking_token_hash=token_hash,
+                created_at=now,
+                updated_at=now,
+            )
+        except ValidationError as val_err:
+            return build_api_response(
+                400,
+                {"error": "Validation failed", "details": val_err.errors()},
+            )
 
         try:
             self._donations_repo.create_donation(donation)
@@ -831,8 +837,12 @@ class FrontendApiService:
         )
         kg_routed = summary.total_kg_routed
         # 1 kg = 2 meals equivalent per USDA / Feeding America standard
-        meals = kg_routed * 2.0
-        orgs = len(summary.recipient_ids)
+        meals = (
+            float(summary.meals_equivalent)
+            if summary.meals_equivalent > 0
+            else round(kg_routed * 2.0, 1)
+        )
+        orgs = summary.organizations_served
 
         pub_summary = PublicImpactSummary(
             total_kg_routed=round(kg_routed, 2),
