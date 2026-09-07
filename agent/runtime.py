@@ -208,7 +208,18 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
     del context
     config, orchestrator, session_mgr, memory_store, sqs = get_runtime_dependencies()
 
-    # 1. EventBridge Scheduled Trigger: Reconcile daily session metrics
+    # 1. EventBridge Scheduled Trigger: Check unmatched donations for ready_by
+    if event.get("detail-type") == "CHECK_UNMATCHED_DONATIONS":
+        service_region = _extract_parameter(event, "service_region") or "metro-core"
+        LOGGER.info(
+            "EventBridge trigger: Checking unmatched donations for region %s",
+            service_region,
+        )
+        return orchestrator.reconcile_time_window_donations(
+            service_region=service_region
+        )
+
+    # 2. EventBridge Scheduled Trigger: Reconcile daily session metrics
     if (
         event.get("detail-type") == "RECONCILE_SESSION_METRICS"
         or event.get("source") == "aws.events"
