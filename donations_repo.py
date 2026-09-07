@@ -5,6 +5,7 @@ and updating surplus food donation records.
 """
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -773,3 +774,219 @@ class DonationsRepository:
             organizations_served=len(matched_orgs),
             donations_count=fulfilled_count,
         )
+
+    @with_dynamodb_retry
+    def query_unmatched_donations_by_region(
+        self,
+        service_region: str,
+        limit: int | None = None,
+        max_evaluated_items: int | None = None,
+    ) -> list[Donation]:
+        """Query unmatched (REPORTED) donations for a specific service region.
+
+        Attempts to query the GSI 'status-ready_by-index' with status='reported'
+        and filter on service_region. If the GSI does not exist or raises
+        ValidationException, executes a bounded pagination scan fallback over
+        the table (up to max_evaluated_items items) to prevent missing matching
+        records when DynamoDB limits evaluate before filtering.
+
+        Args:
+            service_region: Operational target region.
+            limit: Maximum number of matched donations to return.
+            max_evaluated_items: Maximum items to evaluate in fallback scan.
+
+        Returns:
+            List of parsed Donation models in REPORTED status.
+        """
+        effective_limit = limit or self._config.max_unmatched_query_limit
+        effective_max_evaluated = (
+            max_evaluated_items or self._config.max_fallback_scan_evaluated_items
+        )
+        canonical_status = DonationStatus.REPORTED.value
+
+        try:
+            from boto3.dynamodb.conditions import Attr
+
+            response = self._table.query(
+                IndexName="status-ready_by-index",
+                KeyConditionExpression=Key("status").eq(canonical_status),
+                FilterExpression=Attr("service_region").eq(service_region),
+                Limit=effective_limit,
+            )
+            items = response.get("Items", [])
+            return [Donation.model_validate(item) for item in items]
+        except ClientError as exc:
+            err_msg = exc.response.get("Error", {}).get("Message", "")
+            code = exc.response.get("Error", {}).get("Code", "")
+            if (
+                "The table does not have the specified index" in err_msg
+                or code == "ValidationException"
+            ):
+                LOGGER.info(
+                    "status-ready_by-index GSI unavailable, falling back to "
+                    "bounded pagination scan for region %s",
+                    service_region,
+                )
+                from boto3.dynamodb.conditions import Attr
+
+                matched_donations: list[Donation] = []
+                total_evaluated = 0
+                last_evaluated_key = None
+
+                while (
+                    len(matched_donations) < effective_limit
+                    and total_evaluated < effective_max_evaluated
+                ):
+                    scan_limit = min(
+                        effective_limit - len(matched_donations),
+                        effective_max_evaluated - total_evaluated,
+                        50,
+                    )
+                    scan_kwargs: dict[str, Any] = {
+                        "FilterExpression": (
+                            Attr("service_region").eq(service_region)
+                            & Attr("status").eq(canonical_status)
+                        ),
+                        "Limit": max(scan_limit, 1),
+                    }
+                    if last_evaluated_key:
+                        scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
+                    scan_resp = self._table.scan(**scan_kwargs)
+                    evaluated_in_call = scan_resp.get("ScannedCount", 0)
+                    total_evaluated += evaluated_in_call
+
+                    for item in scan_resp.get("Items", []):
+                        matched_donations.append(Donation.model_validate(item))
+                        if len(matched_donations) >= effective_limit:
+                            break
+
+                    last_evaluated_key = scan_resp.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+
+                return matched_donations
+            raise
+
+    @with_dynamodb_retry
+    def escalate_missed_window_transaction(
+        self,
+        donation_id: str,
+        reason: EscalationReason,
+        transition_time: datetime | None = None,
+    ) -> bool:
+        """Atomically transition donation to ESCALATED and record audit event.
+
+        Uses DynamoDB TransactWriteItems to couple the status transition
+        (reported -> escalated) with the creation of an immutable audit record
+        under idempotency key '{donation_id}:missed_window_escalation'.
+
+        ConditionExpression strictly validates single canonical '#st = :reported'
+        status. If another concurrent execution or retry attempts to escalate
+        or record the audit event, the transaction is cancelled and this method
+        returns False cleanly as an idempotent NO-OP.
+
+        Args:
+            donation_id: Target donation identifier.
+            reason: Validated EscalationReason enum value.
+            transition_time: Optional datetime for deterministic timestamps.
+
+        Returns:
+            True if this execution won the transaction and committed state;
+            False if another execution already transitioned state (safe NO-OP).
+
+        Raises:
+            ClientError: If an unexpected DynamoDB error occurs.
+        """
+        now = transition_time or datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        date_status = compute_date_status(DonationStatus.ESCALATED, now)
+        idempotency_key = f"{donation_id}:missed_window_escalation"
+        event_id = f"evt-{uuid.uuid4().hex[:12]}"
+
+        target_key = {"donation_id": {"S": donation_id}}
+        transact_items = [
+            {
+                "Update": {
+                    "TableName": self._config.donations_table_name,
+                    "Key": target_key,
+                    "UpdateExpression": (
+                        "SET #st = :escalated_status, #er = :reason, "
+                        "#ua = :now, #ds = :date_status"
+                    ),
+                    "ConditionExpression": (
+                        "attribute_exists(donation_id) AND #st = :reported_status"
+                    ),
+                    "ExpressionAttributeNames": {
+                        "#st": "status",
+                        "#er": "escalation_reason",
+                        "#ua": "updated_at",
+                        "#ds": "date_status",
+                    },
+                    "ExpressionAttributeValues": {
+                        ":escalated_status": {"S": DonationStatus.ESCALATED.value},
+                        ":reported_status": {"S": DonationStatus.REPORTED.value},
+                        ":reason": {"S": reason.value},
+                        ":now": {"S": now_iso},
+                        ":date_status": {"S": date_status},
+                    },
+                }
+            },
+            {
+                "Put": {
+                    "TableName": self._config.matches_audit_table_name,
+                    "Item": {
+                        "idempotency_key": {"S": idempotency_key},
+                        "event_id": {"S": event_id},
+                        "donation_id": {"S": donation_id},
+                        "action": {"S": "ESCALATED_MISSED_WINDOW"},
+                        "actor": {"S": "eventbridge_time_window_monitor"},
+                        "timestamp": {"S": now_iso},
+                        "details": {
+                            "M": {
+                                "reason": {"S": reason.value},
+                                "escalated_at": {"S": now_iso},
+                            }
+                        },
+                    },
+                    "ConditionExpression": "attribute_not_exists(idempotency_key)",
+                }
+            },
+        ]
+
+        try:
+            self._client.transact_write_items(
+                ClientRequestToken=idempotency_key,
+                TransactItems=transact_items,
+            )
+            LOGGER.info(
+                "Atomic missed-window escalation transaction succeeded for "
+                "donation %s",
+                donation_id,
+            )
+            return True
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "TransactionCanceledException":
+                reasons = exc.response.get("CancellationReasons", [])
+                code_0 = reasons[0].get("Code") if len(reasons) > 0 else None
+                code_1 = reasons[1].get("Code") if len(reasons) > 1 else None
+                if (
+                    code_0 == "ConditionalCheckFailed"
+                    or code_1 == "ConditionalCheckFailed"
+                ):
+                    LOGGER.info(
+                        "Missed-window escalation conditional check failed for "
+                        "donation %s (code_0: %s, code_1: %s); safe NO-OP",
+                        donation_id,
+                        code_0,
+                        code_1,
+                    )
+                    return False
+            if code == "IdempotentParameterMismatchException":
+                LOGGER.info(
+                    "Idempotent parameter mismatch for %s; returning False as NO-OP",
+                    idempotency_key,
+                )
+                return False
+            raise
