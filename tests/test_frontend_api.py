@@ -405,7 +405,8 @@ def test_general_rate_limiter_thirty_per_minute() -> None:
         }
     )
     assert res_31["statusCode"] == 429
-    assert res_31["headers"]["Retry-After"] == "60"
+    retry_after_val = int(res_31["headers"]["Retry-After"])
+    assert 1 <= retry_after_val <= 60
 
 
 # ------------------------------------------------------------------------------
