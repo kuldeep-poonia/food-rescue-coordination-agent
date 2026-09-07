@@ -130,19 +130,26 @@ class AmazonLocationDistanceCalculator:
                 distance_km = summary.get("Distance", 0.0)
                 return round(float(distance_km), 2)
             except Exception as exc:
+                code = ""
+                if hasattr(exc, "response") and isinstance(exc.response, dict):
+                    code = exc.response.get("Error", {}).get("Code", "")
+                detail = (
+                    f"{code} ({exc.__class__.__name__})"
+                    if code
+                    else exc.__class__.__name__
+                )
                 if self._allow_fallback:
                     LOGGER.warning(
                         "Amazon Location Service error (%s); degrading to fallback",
-                        exc.__class__.__name__,
+                        detail,
                     )
                     return self._fallback.calculate_distance_km(origin, destination)
                 LOGGER.error(
                     "Amazon Location Service unavailable (%s); routing failed",
-                    exc.__class__.__name__,
+                    detail,
                 )
                 err_msg = (
-                    f"Amazon Location Service route calculation failed: "
-                    f"{exc.__class__.__name__}"
+                    f"Amazon Location Service route calculation failed: {detail}"
                 )
                 raise LocationServiceUnavailableError(err_msg) from exc
 
