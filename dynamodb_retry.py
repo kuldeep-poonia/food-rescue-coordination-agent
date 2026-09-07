@@ -13,9 +13,10 @@ from typing import Any, TypeVar
 from botocore.exceptions import ClientError
 
 from config import DEFAULT_CLIENT_TIMEOUT_SECONDS, MAX_TRANSIENT_RETRY_ATTEMPTS
+from tools.logging_utils import get_structured_logger
 
 F = TypeVar("F", bound=Callable[..., Any])
-LOGGER: logging.Logger = logging.getLogger(__name__)
+LOGGER: logging.Logger = get_structured_logger(__name__)
 
 # Transient error codes that warrant automated retry with backoff
 RETRIABLE_DYNAMO_ERROR_CODES: frozenset[str] = frozenset(
