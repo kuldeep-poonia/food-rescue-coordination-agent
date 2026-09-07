@@ -1,6 +1,8 @@
 """Pure multi-factor recipient matching algorithm with transparent scoring."""
 
-from config import MAX_MATCH_DISTANCE_KM
+from datetime import datetime
+
+from config import FOOD_SAFETY_MIN_SHELF_LIFE_MINUTES, MAX_MATCH_DISTANCE_KM
 from models import (
     Donation,
     DonationClassification,
@@ -21,33 +23,66 @@ WEIGHT_URGENCY: float = 0.25
 WEIGHT_DIETARY: float = 0.25
 WEIGHT_CAPACITY: float = 0.15
 
+# Documented scoring sub-factor constants
+CRITICAL_URGENCY_DISTANCE_FACTOR: float = 0.6
+HIGH_URGENCY_DISTANCE_FACTOR: float = 0.8
+STANDARD_URGENCY_SCORE: float = 1.0
+
+DIETARY_PRIORITY_SCORE: float = 1.0
+DIETARY_COMPATIBLE_SCORE: float = 0.6
+
+CAPACITY_MIN_SCORE: float = 0.2
+CAPACITY_MAX_SCORE: float = 1.0
+CAPACITY_UTILIZATION_MULTIPLIER: float = 1.5
+
 
 def find_best_match(
     donation: Donation,
     candidates: list[Recipient],
     classification: DonationClassification | None = None,
     distance_calculator: DistanceCalculator | None = None,
+    current_time: datetime | None = None,
 ) -> MatchResult:
     """Evaluate and rank recipient organizations for a surplus food donation.
 
-    Enforces hard constraints (capacity, dietary exclusions, maximum distance radius)
-    and applies a multi-factor scoring function:
+    Enforces hard constraints (food safety threshold, capacity, dietary exclusions,
+    maximum distance radius) and applies a multi-factor scoring function:
     - Proximity / Distance (35%)
     - Expiry Urgency Fit (25%)
     - Dietary Alignment (25%)
     - Capacity Utilization (15%)
+
+    If distance calculation encounters an infrastructure failure
+    (LocationServiceUnavailableError), the exception propagates directly
+    to the caller for fail-safe escalation.
 
     Args:
         donation: Validated surplus food Donation model.
         candidates: List of active Recipient models in the service region.
         classification: Optional pre-computed DonationClassification.
         distance_calculator: Optional distance provider (defaults to Geodesic).
+        current_time: Optional reference datetime for deterministic testing.
 
     Returns:
         MatchResult with ranked candidates, top match, and diagnostic reasoning.
     """
     calc = distance_calculator or GeodesicDistanceCalculator()
-    clf = classification or classify_donation(donation)
+    clf = classification or classify_donation(donation, current_time=current_time)
+
+    # Hard constraint 0: Food safety threshold (<60 minutes shelf life at match time)
+    if clf.is_safety_threshold_breached:
+        rejection_reason = (
+            f"Food safety threshold breached for donation {donation.donation_id}: "
+            f"remaining shelf-life is below {FOOD_SAFETY_MIN_SHELF_LIFE_MINUTES}m "
+            f"({clf.shelf_life_remaining_hours:.2f} hours). Escalation required."
+        )
+        LOGGER.warning(rejection_reason)
+        return MatchResult(
+            donation_id=donation.donation_id,
+            ranked_candidates=[],
+            best_match=None,
+            rejection_reason=rejection_reason,
+        )
 
     LOGGER.info(
         "Evaluating %d recipient candidates for donation %s (%s, %.1fkg)",
@@ -83,7 +118,7 @@ def find_best_match(
             disqualification_counts["dietary_exclusion"] += 1
             continue
 
-        # Hard constraint 3: Distance boundary
+        # Hard constraint 3: Distance boundary (exception propagates on failure)
         dist_km = calc.calculate_distance_km(
             donation.donor_coordinates, recipient.coordinates
         )
@@ -98,24 +133,29 @@ def find_best_match(
         # 2. Urgency fit score
         if clf.urgency_level == UrgencyLevel.CRITICAL:
             # Critical donations heavily reward closest destinations
-            urgency_score = max(0.0, 1.0 - (dist_km / (MAX_MATCH_DISTANCE_KM * 0.6)))
+            crit_denom = MAX_MATCH_DISTANCE_KM * CRITICAL_URGENCY_DISTANCE_FACTOR
+            urgency_score = max(0.0, 1.0 - (dist_km / crit_denom))
         elif clf.urgency_level == UrgencyLevel.HIGH:
-            urgency_score = max(0.0, 1.0 - (dist_km / (MAX_MATCH_DISTANCE_KM * 0.8)))
+            high_denom = MAX_MATCH_DISTANCE_KM * HIGH_URGENCY_DISTANCE_FACTOR
+            urgency_score = max(0.0, 1.0 - (dist_km / high_denom))
         else:
-            urgency_score = 1.0
+            urgency_score = STANDARD_URGENCY_SCORE
 
         # 3. Dietary requirements score
         requirements = [r.strip().lower() for r in recipient.dietary_requirements]
         if food_cat in requirements:
-            dietary_score = 1.0
+            dietary_score = DIETARY_PRIORITY_SCORE
             dietary_fit = True
         else:
-            dietary_score = 0.6  # Neutral fit: not requested, but not excluded
+            dietary_score = DIETARY_COMPATIBLE_SCORE
             dietary_fit = False
 
         # 4. Capacity efficiency score
         utilization = donation.quantity_kg / max(recipient.capacity_kg_remaining, 1.0)
-        capacity_score = max(0.2, min(1.0, utilization * 1.5))
+        capacity_score = max(
+            CAPACITY_MIN_SCORE,
+            min(CAPACITY_MAX_SCORE, utilization * CAPACITY_UTILIZATION_MULTIPLIER),
+        )
 
         total_score = round(
             WEIGHT_DISTANCE * distance_score
@@ -161,8 +201,9 @@ def find_best_match(
             rejection_reason=rejection_reason,
         )
 
-    # Sort primarily by score descending, secondarily by distance ascending
-    qualified_candidates.sort(key=lambda c: (-c.score, c.distance_km))
+    # Sort primarily by score descending, secondarily by distance ascending,
+    # and tertiarily by recipient_id ascending for deterministic ranking
+    qualified_candidates.sort(key=lambda c: (-c.score, c.distance_km, c.recipient_id))
     best_candidate = qualified_candidates[0]
 
     LOGGER.info(
