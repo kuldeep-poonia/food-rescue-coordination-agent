@@ -44,7 +44,20 @@ Resources:
       MessageRetentionPeriod: 1209600 # 14 days
       KmsMasterKeyId: "alias/aws/sqs"
 
-  # 3. IAM Execution Role for Bedrock Agent and Lambda Runtime
+  # 3. Notification and Coordinator Escalation SNS Topics
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "frca-notifications-${EnvironmentName}"
+      KmsMasterKeyId: "alias/aws/sns"
+
+  CoordinatorEscalationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "frca-escalations-${EnvironmentName}"
+      KmsMasterKeyId: "alias/aws/sns"
+
+  # 4. IAM Execution Role for Bedrock Agent and Lambda Runtime
   AgentExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -81,6 +94,16 @@ Resources:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-volunteers-${EnvironmentName}/index/*"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/frca-matches-audit-${EnvironmentName}/index/*"
+        - PolicyName: SNSPublishAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref NotificationTopic
+                  - !Ref CoordinatorEscalationTopic
         - PolicyName: SQSDeadLetterQueueAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -125,6 +148,8 @@ Resources:
           VOLUNTEERS_TABLE_NAME: !Sub "frca-volunteers-${EnvironmentName}"
           MATCHES_AUDIT_TABLE_NAME: !Sub "frca-matches-audit-${EnvironmentName}"
           COORDINATOR_DLQ_URL: !Ref CoordinatorDLQ
+          NOTIFICATION_TOPIC_ARN: !Ref NotificationTopic
+          COORDINATOR_ESCALATION_TOPIC_ARN: !Ref CoordinatorEscalationTopic
 
   # 5. Scheduled EventBridge Rule for Periodic Metric Reconciliation (Every 15 min)
   ReconciliationScheduleRule:
@@ -139,7 +164,7 @@ Resources:
           Id: "ReconcileSessionMetricsTarget"
           Input: '{"detail-type": "RECONCILE_SESSION_METRICS", "source": "aws.events", "detail": {"service_region": "metro-core"}}'
 
-  # 6. Lambda Permission for EventBridge Invocation
+  # 6. Lambda Permission for Metric Reconciliation EventBridge Invocation
   EventBridgeLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -147,6 +172,28 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ReconciliationScheduleRule.Arn
+
+  # 7. Scheduled EventBridge Rule for Time-Window Checks (Every 5 min)
+  TimeWindowCheckScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "frca-time-window-check-${EnvironmentName}"
+      Description: "Trigger periodic 5-minute check for unmatched donations approaching or past ready_by window"
+      ScheduleExpression: "rate(5 minutes)"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AgentCoreRuntimeFunction.Arn
+          Id: "CheckUnmatchedDonationsTarget"
+          Input: '{"detail-type": "CHECK_UNMATCHED_DONATIONS", "source": "aws.events", "detail": {"service_region": "metro-core"}}'
+
+  # 8. Lambda Permission for Time-Window Check EventBridge Invocation
+  TimeWindowCheckLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgentCoreRuntimeFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TimeWindowCheckScheduleRule.Arn
 
 Outputs:
   SessionsMemoryTableName:
@@ -160,6 +207,18 @@ Outputs:
     Value: !Ref CoordinatorDLQ
     Export:
       Name: !Sub "${AWS::StackName}-CoordinatorDLQUrl"
+
+  NotificationTopicArn:
+    Description: "ARN of the Amazon SNS topic for transactional notifications"
+    Value: !Ref NotificationTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-NotificationTopicArn"
+
+  CoordinatorEscalationTopicArn:
+    Description: "ARN of the Amazon SNS topic for coordinator escalations"
+    Value: !Ref CoordinatorEscalationTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-CoordinatorEscalationTopicArn"
 
   AgentExecutionRoleArn:
     Description: "ARN of the IAM Role for Bedrock Agent and Lambda execution"
