@@ -2,10 +2,17 @@
 
 import html
 import re
+import time
 from typing import Any
 
+from botocore.exceptions import BotoCoreError, ClientError
+
 from config import load_app_configuration
-from models import NotificationMessage, NotificationRecipientType
+from models import (
+    NotificationDeliveryError,
+    NotificationMessage,
+    NotificationRecipientType,
+)
 from tools.logging_utils import get_structured_logger
 
 LOGGER = get_structured_logger(__name__)
@@ -38,6 +45,130 @@ TEMPLATE_EXPR_REGEX: re.Pattern[str] = re.compile(
     r"(\$\{.*?\}|\{\{.*?\}\}|<%.*?%>|\{.*?\}|\[\[.*?\]\])", re.DOTALL
 )
 DANGEROUS_CHARS_REGEX: re.Pattern[str] = re.compile(r"[\r\n\t\x00-\x1f\x7f-\x9f]")
+
+# Known, safe AWS SNS error code allowlist mapping to sanitized descriptions
+ALLOWLISTED_SNS_ERROR_CODES: dict[str, str] = {
+    "ThrottlingException": "ThrottlingException: Request was throttled by AWS SNS",
+    "Throttling": "Throttling: Request was throttled by AWS SNS",
+    "ProvisionedThroughputExceededException": (
+        "ProvisionedThroughputExceeded: SNS throughput exceeded"
+    ),
+    "InternalErrorException": (
+        "InternalErrorException: Downstream AWS SNS service error"
+    ),
+    "InternalError": "InternalError: Downstream AWS SNS service error",
+    "ServiceUnavailable": "ServiceUnavailable: AWS SNS service temporarily unavailable",
+    "ServiceUnavailableException": (
+        "ServiceUnavailableException: AWS SNS service temporarily unavailable"
+    ),
+    "RequestLimitExceeded": "RequestLimitExceeded: Request limit exceeded",
+    "TooManyRequestsException": "TooManyRequests: Too many requests sent to AWS SNS",
+    "InvalidParameterException": (
+        "InvalidParameterException: Invalid notification parameter or endpoint"
+    ),
+    "InvalidParameter": (
+        "InvalidParameter: Invalid notification parameter or endpoint"
+    ),
+    "ParameterValueInvalid": "ParameterValueInvalid: Parameter value is invalid",
+    "AuthorizationErrorException": (
+        "AuthorizationErrorException: Access denied publishing to SNS topic"
+    ),
+    "AuthorizationError": (
+        "AuthorizationError: Access denied publishing to SNS topic"
+    ),
+    "AccessDeniedException": (
+        "AccessDeniedException: Access denied publishing to SNS topic"
+    ),
+    "AccessDenied": "AccessDenied: Access denied publishing to SNS topic",
+    "EndpointDisabledException": (
+        "EndpointDisabledException: Target notification endpoint is disabled"
+    ),
+    "EndpointDisabled": (
+        "EndpointDisabled: Target notification endpoint is disabled"
+    ),
+    "NotFoundException": (
+        "NotFoundException: Target SNS topic or subscription not found"
+    ),
+    "NotFound": "NotFound: Target SNS topic or subscription not found",
+    "TimeoutException": (
+        "TimeoutException: Connection timeout publishing to AWS SNS"
+    ),
+    "ConnectTimeoutError": (
+        "ConnectTimeoutError: Connection timeout publishing to AWS SNS"
+    ),
+    "ReadTimeoutError": "ReadTimeoutError: Read timeout publishing to AWS SNS",
+    "EndpointConnectionError": (
+        "EndpointConnectionError: Network error reaching AWS SNS endpoint"
+    ),
+}
+
+DEFAULT_SAFE_ERROR_DETAIL: str = "DownstreamDeliveryError: Notification delivery failed"
+
+RETRYABLE_SNS_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "Throttling",
+        "ThrottlingException",
+        "ProvisionedThroughputExceededException",
+        "InternalError",
+        "InternalErrorException",
+        "ServiceUnavailable",
+        "ServiceUnavailableException",
+        "RequestLimitExceeded",
+        "TooManyRequestsException",
+    }
+)
+
+
+def mask_destination(destination: str) -> str:
+    """Mask destination address (phone or email) preserving only edge identifiers.
+
+    Guarantees that raw recipient contact numbers or emails are never written
+    to log streams or exception diagnostic traces.
+    """
+    raw = str(destination).strip()
+    if not raw:
+        return "***"
+    if "@" in raw:
+        parts = raw.split("@", 1)
+        name = parts[0]
+        domain = parts[1] if len(parts) > 1 else ""
+        masked_name = f"{name[0]}***" if len(name) > 1 else "***"
+        return f"{masked_name}@{domain}"
+    if len(raw) <= 4:
+        return "****"
+    return f"{raw[:2]}*****{raw[-4:]}"
+
+
+def sanitize_sns_error_detail(exc: Exception) -> str:
+    """Extract allowlisted error code without raw exception message or payload dump.
+
+    Strictly protects against leaking PII, payload fragments, or sensitive AWS
+    diagnostics that may exist in raw exception strings or boto3 responses.
+    """
+    if isinstance(exc, ClientError):
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ALLOWLISTED_SNS_ERROR_CODES:
+            return ALLOWLISTED_SNS_ERROR_CODES[code]
+        if code and code.replace("_", "").isalnum():
+            return f"{code}: Downstream AWS SNS service error"
+        return DEFAULT_SAFE_ERROR_DETAIL
+
+    exc_class_name = exc.__class__.__name__
+    if exc_class_name in ALLOWLISTED_SNS_ERROR_CODES:
+        return ALLOWLISTED_SNS_ERROR_CODES[exc_class_name]
+
+    if isinstance(exc, (TimeoutError, ConnectionError, BotoCoreError)):
+        return f"{exc_class_name}: Network or transport connection failure"
+
+    return DEFAULT_SAFE_ERROR_DETAIL
+
+
+def is_retryable_sns_error(exc: Exception) -> bool:
+    """Classify whether an SNS error is transient and eligible for a single retry."""
+    if isinstance(exc, ClientError):
+        code = exc.response.get("Error", {}).get("Code", "")
+        return code in RETRYABLE_SNS_ERROR_CODES
+    return isinstance(exc, (TimeoutError, ConnectionError, BotoCoreError))
 
 
 def sanitize_template_variable(value: Any) -> str:
@@ -131,6 +262,8 @@ def send_notification(
         )
     )
 
+    masked_dest = mask_destination(destination)
+
     LOGGER.info(
         "Dispatching %s notification using %s (Correlation: %s)",
         recipient_type.value,
@@ -140,28 +273,61 @@ def send_notification(
             "details": {
                 "recipient_type": recipient_type.value,
                 "template_id": template_id,
-                "destination": destination,
+                "destination": masked_dest,
                 "correlation_id": correlation_id,
             }
         },
     )
 
     if sns_client is not None and target_arn:
-        sns_client.publish(
-            TopicArn=target_arn,
-            Message=rendered_body,
-            Subject=f"FRCA Notification: {template_id}",
-            MessageAttributes={
-                "RecipientType": {
-                    "DataType": "String",
-                    "StringValue": recipient_type.value,
-                },
-                "CorrelationId": {
-                    "DataType": "String",
-                    "StringValue": correlation_id,
-                },
-            },
-        )
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                sns_client.publish(
+                    TopicArn=target_arn,
+                    Message=rendered_body,
+                    Subject=f"FRCA Notification: {template_id}",
+                    MessageAttributes={
+                        "RecipientType": {
+                            "DataType": "String",
+                            "StringValue": recipient_type.value,
+                        },
+                        "CorrelationId": {
+                            "DataType": "String",
+                            "StringValue": correlation_id,
+                        },
+                    },
+                )
+                break
+            except Exception as exc:
+                safe_detail = sanitize_sns_error_detail(exc)
+                if is_retryable_sns_error(exc) and attempt == 0:
+                    LOGGER.warning(
+                        "Transient error publishing %s to %s (%s); retrying once",
+                        recipient_type.value,
+                        masked_dest,
+                        safe_detail,
+                        extra={"correlation_id": correlation_id},
+                    )
+                    time.sleep(0.1)
+                    continue
+
+                LOGGER.error(
+                    "Failed to deliver %s notification to %s: %s",
+                    recipient_type.value,
+                    masked_dest,
+                    safe_detail,
+                    extra={"correlation_id": correlation_id},
+                )
+                raise NotificationDeliveryError(
+                    message=(
+                        f"Notification delivery failed for {recipient_type.value}: "
+                        f"{safe_detail}"
+                    ),
+                    recipient_type=recipient_type.value,
+                    masked_destination=masked_dest,
+                    safe_error_detail=safe_detail,
+                ) from None
 
     return NotificationMessage(
         recipient_type=recipient_type,

@@ -332,6 +332,27 @@ class GuardrailViolationError(RuntimeError):
     """Raised when an action violates an operational safety guardrail."""
 
 
+class NotificationDeliveryError(Exception):
+    """Raised when notification delivery fails after retries or non-retryable error.
+
+    Guarantees strict privacy boundary: destination is masked and safe_error_detail
+    contains only an allowlisted/sanitized error code or message without raw
+    exception or payload dumps.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        recipient_type: str,
+        masked_destination: str,
+        safe_error_detail: str,
+    ) -> None:
+        super().__init__(message)
+        self.recipient_type = recipient_type
+        self.masked_destination = masked_destination
+        self.safe_error_detail = safe_error_detail
+
+
 class PipelineStep(str, Enum):
     """Execution stages within the autonomous donation coordination pipeline."""
 
