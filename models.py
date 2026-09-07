@@ -41,6 +41,15 @@ class DonationStatus(str, Enum):
     ESCALATED = "escalated"
 
 
+class CoordinatorNotificationStatus(str, Enum):
+    """Lifecycle status of transactional coordinator alert."""
+
+    PENDING = "PENDING"
+    CLAIMED = "CLAIMED"
+    DELIVERED = "DELIVERED"
+    FAILED = "FAILED"
+
+
 class EscalationReason(str, Enum):
     """Exhaustive list of escalation triggers defined in product overview."""
 
@@ -80,8 +89,12 @@ class Donation(BaseModel):
     assigned_volunteer_id: str | None = None
     escalation_reason: EscalationReason | None = None
     date_status: str | None = None
+    coordinator_notification_status: CoordinatorNotificationStatus | None = None
+    coordinator_notification_claimed_at: datetime | None = None
+    coordinator_notification_claim_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
     @field_validator("donor_phone")
     @classmethod
@@ -346,11 +359,14 @@ class NotificationDeliveryError(Exception):
         recipient_type: str,
         masked_destination: str,
         safe_error_detail: str,
+        is_ambiguous: bool = False,
     ) -> None:
         super().__init__(message)
         self.recipient_type = recipient_type
         self.masked_destination = masked_destination
         self.safe_error_detail = safe_error_detail
+        self.is_ambiguous = is_ambiguous
+
 
 
 class PipelineStep(str, Enum):
