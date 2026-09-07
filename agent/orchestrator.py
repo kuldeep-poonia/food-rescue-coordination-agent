@@ -22,6 +22,7 @@ from models import (
     DonationStatus,
     EscalationReason,
     MatchCandidate,
+    NotificationDeliveryError,
     NotificationRecipientType,
     OrchestrationResult,
     PipelineStep,
@@ -37,7 +38,7 @@ from tools.find_best_match import find_best_match
 from tools.flag_for_human import flag_for_human
 from tools.get_recipient_capacity import get_recipient_capacity
 from tools.logging_utils import get_structured_logger
-from tools.send_notification import send_notification
+from tools.send_notification import mask_destination, send_notification
 from volunteers_repo import VolunteersRepository
 
 LOGGER = get_structured_logger(__name__)
@@ -100,36 +101,65 @@ class StrandsOrchestrator:
             )
             return
 
-        send_notification(
-            recipient_type=NotificationRecipientType.DONOR,
-            destination=donation.donor_phone,
-            template_id="DONOR_CONFIRMATION_V1",
-            parameters={
-                "donor_name": donation.donor_name,
-                "quantity_kg": donation.quantity_kg,
-                "food_category": donation.food_category.value,
-                "recipient_name": recipient_name,
-                "volunteer_name": volunteer_name,
-                "ready_by": donation.ready_by.isoformat(),
-            },
-            correlation_id=correlation_id,
-            sns_client=self._sns_client,
-        )
-
-        audit_event = AuditEvent(
-            event_id=f"evt-{uuid.uuid4().hex[:12]}",
-            donation_id=donation.donation_id,
-            action="NOTIFICATION_DISPATCHED",
-            actor="strands_orchestrator",
-            idempotency_key=idempotency_key,
-            details={
-                "recipient_type": NotificationRecipientType.DONOR.value,
-                "destination": donation.donor_phone,
-                "correlation_id": correlation_id,
-            },
-        )
-        self._audit_repo.record_audit_event(audit_event)
-        dispatched_keys.add(idempotency_key)
+        masked_dest = mask_destination(donation.donor_phone)
+        try:
+            send_notification(
+                recipient_type=NotificationRecipientType.DONOR,
+                destination=donation.donor_phone,
+                template_id="DONOR_CONFIRMATION_V1",
+                parameters={
+                    "donor_name": donation.donor_name,
+                    "quantity_kg": donation.quantity_kg,
+                    "food_category": donation.food_category.value,
+                    "recipient_name": recipient_name,
+                    "volunteer_name": volunteer_name,
+                    "ready_by": donation.ready_by.isoformat(),
+                },
+                correlation_id=correlation_id,
+                sns_client=self._sns_client,
+            )
+            audit_event = AuditEvent(
+                event_id=f"evt-{uuid.uuid4().hex[:12]}",
+                donation_id=donation.donation_id,
+                action="NOTIFICATION_DISPATCHED",
+                actor="strands_orchestrator",
+                idempotency_key=idempotency_key,
+                details={
+                    "recipient_type": NotificationRecipientType.DONOR.value,
+                    "destination": masked_dest,
+                    "correlation_id": correlation_id,
+                },
+            )
+            self._audit_repo.record_audit_event(audit_event)
+            dispatched_keys.add(idempotency_key)
+        except NotificationDeliveryError as exc:
+            LOGGER.warning(
+                "Donor notification failed for %s: %s; alerting coordinator",
+                donation.donation_id,
+                exc.safe_error_detail,
+                extra={"correlation_id": correlation_id},
+            )
+            fail_event = AuditEvent(
+                event_id=f"evt-{uuid.uuid4().hex[:12]}",
+                donation_id=donation.donation_id,
+                action="NOTIFICATION_DELIVERY_FAILED",
+                actor="strands_orchestrator",
+                idempotency_key=f"{donation.donation_id}:donor_notif_failed",
+                details={
+                    "recipient_type": NotificationRecipientType.DONOR.value,
+                    "masked_destination": exc.masked_destination,
+                    "safe_error_detail": exc.safe_error_detail,
+                    "correlation_id": correlation_id,
+                },
+            )
+            self._audit_repo.record_audit_event(fail_event)
+            self._dispatch_coordinator_fallback_alert(
+                donation_id=donation.donation_id,
+                recipient_type="donor",
+                masked_destination=exc.masked_destination,
+                safe_error_detail=exc.safe_error_detail,
+                correlation_id=correlation_id,
+            )
 
     def _dispatch_recipient_notification(
         self,
@@ -156,36 +186,113 @@ class StrandsOrchestrator:
         )
         rec_phone = rec_entity.contact_phone if rec_entity else donation.donor_phone
         target_contact = rec_entity.contact_name if rec_entity else contact_name
+        masked_rec_dest = mask_destination(rec_phone)
 
-        send_notification(
-            recipient_type=NotificationRecipientType.RECIPIENT,
-            destination=rec_phone,
-            template_id="RECIPIENT_CONFIRMATION_V1",
-            parameters={
-                "contact_name": target_contact,
-                "quantity_kg": donation.quantity_kg,
-                "food_category": donation.food_category.value,
-                "donor_name": donation.donor_name,
-                "volunteer_name": volunteer_name,
-            },
-            correlation_id=correlation_id,
-            sns_client=self._sns_client,
-        )
+        try:
+            send_notification(
+                recipient_type=NotificationRecipientType.RECIPIENT,
+                destination=rec_phone,
+                template_id="RECIPIENT_CONFIRMATION_V1",
+                parameters={
+                    "contact_name": target_contact,
+                    "quantity_kg": donation.quantity_kg,
+                    "food_category": donation.food_category.value,
+                    "donor_name": donation.donor_name,
+                    "volunteer_name": volunteer_name,
+                },
+                correlation_id=correlation_id,
+                sns_client=self._sns_client,
+            )
+            audit_event = AuditEvent(
+                event_id=f"evt-{uuid.uuid4().hex[:12]}",
+                donation_id=donation.donation_id,
+                action="NOTIFICATION_DISPATCHED",
+                actor="strands_orchestrator",
+                idempotency_key=idempotency_key,
+                details={
+                    "recipient_type": NotificationRecipientType.RECIPIENT.value,
+                    "destination": masked_rec_dest,
+                    "correlation_id": correlation_id,
+                },
+            )
+            self._audit_repo.record_audit_event(audit_event)
+            dispatched_keys.add(idempotency_key)
+        except NotificationDeliveryError as exc:
+            LOGGER.warning(
+                "Recipient notification failed for %s: %s; alerting coordinator",
+                donation.donation_id,
+                exc.safe_error_detail,
+                extra={"correlation_id": correlation_id},
+            )
+            fail_event = AuditEvent(
+                event_id=f"evt-{uuid.uuid4().hex[:12]}",
+                donation_id=donation.donation_id,
+                action="NOTIFICATION_DELIVERY_FAILED",
+                actor="strands_orchestrator",
+                idempotency_key=f"{donation.donation_id}:recipient_notif_failed",
+                details={
+                    "recipient_type": NotificationRecipientType.RECIPIENT.value,
+                    "masked_destination": exc.masked_destination,
+                    "safe_error_detail": exc.safe_error_detail,
+                    "correlation_id": correlation_id,
+                },
+            )
+            self._audit_repo.record_audit_event(fail_event)
+            self._dispatch_coordinator_fallback_alert(
+                donation_id=donation.donation_id,
+                recipient_type="recipient",
+                masked_destination=exc.masked_destination,
+                safe_error_detail=exc.safe_error_detail,
+                correlation_id=correlation_id,
+            )
 
-        audit_event = AuditEvent(
-            event_id=f"evt-{uuid.uuid4().hex[:12]}",
-            donation_id=donation.donation_id,
-            action="NOTIFICATION_DISPATCHED",
-            actor="strands_orchestrator",
-            idempotency_key=idempotency_key,
-            details={
-                "recipient_type": NotificationRecipientType.RECIPIENT.value,
-                "destination": rec_phone,
-                "correlation_id": correlation_id,
-            },
-        )
-        self._audit_repo.record_audit_event(audit_event)
-        dispatched_keys.add(idempotency_key)
+    def _dispatch_coordinator_fallback_alert(
+        self,
+        donation_id: str,
+        recipient_type: str,
+        masked_destination: str,
+        safe_error_detail: str,
+        correlation_id: str,
+    ) -> None:
+        """Publish coordinator alert when downstream notification delivery fails."""
+        coord_key = f"{donation_id}:coordinator_notif_fallback_{recipient_type}"
+        try:
+            send_notification(
+                recipient_type=NotificationRecipientType.COORDINATOR,
+                destination="coordinator-alert",
+                template_id="COORDINATOR_ESCALATION_V1",
+                parameters={
+                    "donation_id": donation_id,
+                    "escalation_reason": "notification_delivery_failure",
+                    "summary": (
+                        f"Delivery to {recipient_type} ({masked_destination}) "
+                        f"failed: {safe_error_detail}"
+                    ),
+                },
+                correlation_id=correlation_id,
+                sns_client=self._sns_client,
+            )
+            coord_event = AuditEvent(
+                event_id=f"evt-{uuid.uuid4().hex[:12]}",
+                donation_id=donation_id,
+                action="NOTIFICATION_COORDINATOR_FALLBACK",
+                actor="strands_orchestrator",
+                idempotency_key=coord_key,
+                details={
+                    "recipient_type": recipient_type,
+                    "masked_destination": masked_destination,
+                    "safe_error_detail": safe_error_detail,
+                    "correlation_id": correlation_id,
+                },
+            )
+            self._audit_repo.record_audit_event(coord_event)
+        except Exception as fallback_exc:
+            LOGGER.error(
+                "Coordinator fallback notification failed for %s: %s",
+                donation_id,
+                fallback_exc.__class__.__name__,
+                extra={"correlation_id": correlation_id},
+            )
 
     def _handle_assigned_replay(
         self,
@@ -757,3 +864,132 @@ class StrandsOrchestrator:
             is_dry_run=dry_run,
             correlation_id=corr_id,
         )
+
+    def reconcile_time_window_donations(
+        self,
+        service_region: str = "metro-core",
+        current_time: Any | None = None,
+    ) -> dict[str, Any]:
+        """Reconcile unmatched donations against operational time windows.
+
+        Triggered periodically (e.g. every 5 minutes by EventBridge). Queries all
+        unmatched (REPORTED) donations in the region and applies strict time precedence:
+        1. Past or at ready_by (ready_by <= now): Missed window. Atomically escalates
+           via TransactWriteItems (status update + audit event). The winning execution
+           dispatches a coordinator escalation notification.
+        2. Approaching ready_by (0 < (ready_by - now) <= approaching_window_hours):
+           Triggers autonomous coordination pipeline for matching and dispatch.
+        3. Outside window (> approaching_window_hours): Left untouched.
+
+        Args:
+            service_region: Operational region to inspect.
+            current_time: Optional datetime for deterministic evaluation.
+
+        Returns:
+            Execution summary metrics dictionary.
+        """
+        from datetime import datetime, timezone
+
+        now = current_time or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+
+        unmatched = self._donations_repo.query_unmatched_donations_by_region(
+            service_region=service_region
+        )
+
+        LOGGER.info(
+            "Reconciling %d unmatched donations in region %s (now: %s)",
+            len(unmatched),
+            service_region,
+            now.isoformat(),
+        )
+
+        escalated_count = 0
+        already_escalated_count = 0
+        coordinated_count = 0
+        untouched_count = 0
+        approaching_seconds = self._config.approaching_window_hours * 3600
+
+        for donation in unmatched:
+            ready_by = donation.ready_by
+            if ready_by.tzinfo is None:
+                ready_by = ready_by.replace(tzinfo=timezone.utc)
+
+            time_diff_seconds = (ready_by - now).total_seconds()
+
+            # Precedence 1: Past or at ready_by window -> escalate
+            if time_diff_seconds <= 0:
+                won = self._donations_repo.escalate_missed_window_transaction(
+                    donation_id=donation.donation_id,
+                    reason=EscalationReason.NO_MATCH_WITHIN_WINDOW,
+                    transition_time=now,
+                )
+                if won:
+                    escalated_count += 1
+                    corr_id = f"sched-missed-{donation.donation_id}"
+                    LOGGER.warning(
+                        "Donation %s missed ready_by window (%s <= %s); escalated",
+                        donation.donation_id,
+                        ready_by.isoformat(),
+                        now.isoformat(),
+                        extra={"correlation_id": corr_id},
+                    )
+                    try:
+                        send_notification(
+                            recipient_type=NotificationRecipientType.COORDINATOR,
+                            destination="coordinator-alert",
+                            template_id="COORDINATOR_ESCALATION_V1",
+                            parameters={
+                                "donation_id": donation.donation_id,
+                                "escalation_reason": (
+                                    EscalationReason.NO_MATCH_WITHIN_WINDOW.value
+                                ),
+                                "summary": (
+                                    f"Donation {donation.donation_id} exceeded "
+                                    f"ready_by window ({ready_by.isoformat()}) "
+                                    f"without matching"
+                                ),
+                            },
+                            correlation_id=corr_id,
+                            sns_client=self._sns_client,
+                        )
+                    except NotificationDeliveryError as exc:
+                        LOGGER.error(
+                            "Failed to deliver missed window alert for %s: %s",
+                            donation.donation_id,
+                            exc.safe_error_detail,
+                            extra={"correlation_id": corr_id},
+                        )
+                else:
+                    already_escalated_count += 1
+
+            # Precedence 2: Approaching ready_by window -> coordinate
+            elif time_diff_seconds <= approaching_seconds:
+                corr_id = f"sched-approach-{donation.donation_id}"
+                LOGGER.info(
+                    "Donation %s in approaching window (%.1fm left); coordinating",
+                    donation.donation_id,
+                    time_diff_seconds / 60.0,
+                    extra={"correlation_id": corr_id},
+                )
+                self.coordinate_donation(
+                    donation_id=donation.donation_id,
+                    service_region=service_region,
+                    correlation_id=corr_id,
+                )
+                coordinated_count += 1
+
+            # Precedence 3: Outside window -> untouched
+            else:
+                untouched_count += 1
+
+        return {
+            "status": "SUCCESS",
+            "service_region": service_region,
+            "evaluated_count": len(unmatched),
+            "escalated_count": escalated_count,
+            "already_escalated_count": already_escalated_count,
+            "coordinated_count": coordinated_count,
+            "untouched_count": untouched_count,
+        }
