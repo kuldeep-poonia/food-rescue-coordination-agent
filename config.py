@@ -43,6 +43,10 @@ DEFAULT_APPROACHING_WINDOW_HOURS: float = 2.0
 DEFAULT_MAX_UNMATCHED_QUERY_LIMIT: int = 50
 DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS: int = 250
 
+# Notification claim lease duration in seconds for coordinator outbox recovery
+DEFAULT_NOTIFICATION_CLAIM_LEASE_SECONDS: int = 120
+
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -71,6 +75,8 @@ class AppConfig:
     approaching_window_hours: float = DEFAULT_APPROACHING_WINDOW_HOURS
     max_unmatched_query_limit: int = DEFAULT_MAX_UNMATCHED_QUERY_LIMIT
     max_fallback_scan_evaluated_items: int = DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS
+    notification_claim_lease_seconds: int = DEFAULT_NOTIFICATION_CLAIM_LEASE_SECONDS
+
 
 
 def load_app_configuration() -> AppConfig:
@@ -160,4 +166,11 @@ def load_app_configuration() -> AppConfig:
                 str(DEFAULT_MAX_FALLBACK_SCAN_EVALUATED_ITEMS),
             )
         ),
+        notification_claim_lease_seconds=int(
+            os.environ.get(
+                "NOTIFICATION_CLAIM_LEASE_SECONDS",
+                str(DEFAULT_NOTIFICATION_CLAIM_LEASE_SECONDS),
+            )
+        ),
     )
+
