@@ -34,7 +34,11 @@ from recipients_repo import (
 )
 from tools.assign_volunteer import assign_volunteer
 from tools.classify_donation import classify_donation
-from tools.distance_calculator import DistanceCalculator, GeodesicDistanceCalculator
+from tools.distance_calculator import (
+    DistanceCalculator,
+    GeodesicDistanceCalculator,
+    LocationServiceUnavailableError,
+)
 from tools.find_best_match import find_best_match
 from tools.flag_for_human import flag_for_human
 from tools.get_recipient_capacity import get_recipient_capacity
@@ -520,12 +524,44 @@ class StrandsOrchestrator:
             # Step 5: Multi-Factor Matching Algorithm
             # ------------------------------------------------------------------
             guardrail.record_step(PipelineStep.MATCH)
-            match_result = find_best_match(
-                donation=donation,
-                candidates=active_recipients,
-                classification=classification,
-                distance_calculator=self._distance_calculator,
-            )
+            try:
+                match_result = find_best_match(
+                    donation=donation,
+                    candidates=active_recipients,
+                    classification=classification,
+                    distance_calculator=self._distance_calculator,
+                )
+            except LocationServiceUnavailableError as exc:
+                LOGGER.error(
+                    "Matching aborted for donation %s due to routing failure: %s",
+                    donation_id,
+                    exc.__class__.__name__,
+                    extra={"correlation_id": corr_id},
+                )
+                ticket = flag_for_human(
+                    donation_id=donation_id,
+                    reason=EscalationReason.NO_MATCH_WITHIN_WINDOW,
+                    summary=(
+                        "Routing service unavailable: Amazon Location Service error"
+                    ),
+                    details={
+                        "service_region": service_region,
+                        "error_type": exc.__class__.__name__,
+                    },
+                    correlation_id=corr_id,
+                    donations_repo=self._donations_repo,
+                    audit_repo=self._audit_repo,
+                    sns_client=self._sns_client,
+                )
+                return OrchestrationResult(
+                    donation_id=donation_id,
+                    status=DonationStatus.ESCALATED,
+                    classification=classification,
+                    escalation_ticket=ticket,
+                    steps_completed=guardrail.completed_steps,
+                    is_dry_run=dry_run,
+                    correlation_id=corr_id,
+                )
 
             # ------------------------------------------------------------------
             # Step 6: Match Guardrail Check
@@ -749,16 +785,56 @@ class StrandsOrchestrator:
         if dry_run:
             assigned_vol_id = "vol-dry-run-001"
         else:
-            assignment = assign_volunteer(
-                donation_id=donation.donation_id,
-                service_region=service_region,
-                correlation_id=corr_id,
-                donations_repo=self._donations_repo,
-                volunteers_repo=self._volunteers_repo,
-                audit_repo=self._audit_repo,
-                distance_calculator=self._distance_calculator,
-                sns_client=self._sns_client,
-            )
+            try:
+                assignment = assign_volunteer(
+                    donation_id=donation.donation_id,
+                    service_region=service_region,
+                    correlation_id=corr_id,
+                    donations_repo=self._donations_repo,
+                    volunteers_repo=self._volunteers_repo,
+                    audit_repo=self._audit_repo,
+                    distance_calculator=self._distance_calculator,
+                    sns_client=self._sns_client,
+                )
+            except LocationServiceUnavailableError as exc:
+                LOGGER.error(
+                    "Volunteer routing failed for donation %s: %s. "
+                    "Unwinding claimed recipient resources atomically.",
+                    donation_id,
+                    exc.__class__.__name__,
+                    extra={"correlation_id": corr_id},
+                )
+                if target_recipient_id:
+                    self._donations_repo.unclaim_and_restore_recipient(
+                        donation_id=donation.donation_id,
+                        recipient_id=target_recipient_id,
+                        quantity_kg=donation.quantity_kg,
+                    )
+                ticket = flag_for_human(
+                    donation_id=donation_id,
+                    reason=EscalationReason.NO_MATCH_WITHIN_WINDOW,
+                    summary=(
+                        "Routing service unavailable: Amazon Location Service error "
+                        "during volunteer assignment"
+                    ),
+                    details={
+                        "service_region": service_region,
+                        "error_type": exc.__class__.__name__,
+                    },
+                    correlation_id=corr_id,
+                    donations_repo=self._donations_repo,
+                    audit_repo=self._audit_repo,
+                    sns_client=self._sns_client,
+                )
+                return OrchestrationResult(
+                    donation_id=donation_id,
+                    status=DonationStatus.ESCALATED,
+                    classification=classification,
+                    escalation_ticket=ticket,
+                    steps_completed=guardrail.completed_steps,
+                    is_dry_run=dry_run,
+                    correlation_id=corr_id,
+                )
 
             if assignment is None:
                 LOGGER.warning(
