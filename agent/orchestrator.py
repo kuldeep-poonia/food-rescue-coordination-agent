@@ -878,9 +878,9 @@ class StrandsOrchestrator:
         Enforces pre-dispatch mutual exclusion:
         1. If already DELIVERED, returns True as a safe NO-OP.
         2. Atomically acquires DynamoDB claim lease (PENDING -> CLAIMED).
-           If another worker holds active claim or state is terminal, returns
-           False cleanly without calling external SNS publish (zero duplicate
-           concurrent dispatch).
+           Atomic claiming prevents concurrent dispatch attempts while a valid
+           claim lease is held. Cross-system recovery remains at-least-once and
+           ambiguous outcomes may still result in duplicate external delivery.
         3. Invokes SNS publish.
         4. On success: transitions CLAIMED -> DELIVERED and records audit event.
         5. On permanent failure (4xx non-retryable): transitions CLAIMED -> FAILED
