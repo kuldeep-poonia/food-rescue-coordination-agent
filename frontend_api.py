@@ -6,7 +6,6 @@ two-tier distributed DynamoDB rate limiting, and strict security headers.
 
 import hashlib
 import json
-import logging
 import secrets
 import time
 import uuid
@@ -36,9 +35,10 @@ from models import (
     VolunteerStatus,
 )
 from recipients_repo import RecipientsRepository
+from tools.logging_utils import CORRELATION_ID_CONTEXT, get_structured_logger
 from volunteers_repo import VolunteersRepository
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_structured_logger(__name__)
 
 SECURITY_HEADERS: dict[str, str] = {
     "Content-Type": "application/json",
@@ -248,6 +248,14 @@ class FrontendApiService:
         http_method = event.get("httpMethod", "GET").upper()
         path = event.get("path", "/").rstrip("/")
         source_ip = extract_client_ip(event)
+
+        headers = event.get("headers") or {}
+        incoming_cid = (
+            headers.get("x-correlation-id")
+            or headers.get("X-Correlation-Id")
+            or f"api-{uuid.uuid4().hex[:12]}"
+        )
+        CORRELATION_ID_CONTEXT.set(incoming_cid)
 
         if http_method == "OPTIONS":
             return build_api_response(200, {"message": "OK"})
