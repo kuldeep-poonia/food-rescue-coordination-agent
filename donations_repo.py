@@ -84,7 +84,14 @@ class DonationsRepository:
             self._table = dynamodb_resource.Table(self._config.donations_table_name)
             meta = getattr(dynamodb_resource, "meta", None)
             client = getattr(meta, "client", None) if meta else None
-            self._client: Any = client if client is not None else dynamodb_resource
+            if client is not None and type(client).__module__.startswith("botocore"):
+                import boto3
+
+                self._client: Any = boto3.client(
+                    "dynamodb", region_name=self._config.aws_region
+                )
+            else:
+                self._client: Any = client if client is not None else dynamodb_resource
         else:
             import boto3
 
@@ -103,6 +110,15 @@ class DonationsRepository:
             ClientError: If DynamoDB write fails after retries.
         """
         item = donation.model_dump(mode="json")
+        item["quantity_kg"] = Decimal(str(item["quantity_kg"]))
+        item["perishability_hours"] = Decimal(str(item["perishability_hours"]))
+        if "donor_coordinates" in item and item["donor_coordinates"]:
+            item["donor_coordinates"]["latitude"] = Decimal(
+                str(item["donor_coordinates"]["latitude"])
+            )
+            item["donor_coordinates"]["longitude"] = Decimal(
+                str(item["donor_coordinates"]["longitude"])
+            )
         if not item.get("date_status"):
             item["date_status"] = compute_date_status(
                 donation.status, donation.created_at
@@ -374,7 +390,8 @@ class DonationsRepository:
                     ),
                     "ConditionExpression": (
                         "attribute_exists(donation_id) AND "
-                        "attribute_not_exists(matched_recipient_id) AND "
+                        "(attribute_not_exists(matched_recipient_id) "
+                        "OR matched_recipient_id = :null_val) AND "
                         "(#st = :reported_status OR #st = :reported_upper)"
                     ),
                     "ExpressionAttributeNames": {
@@ -389,6 +406,7 @@ class DonationsRepository:
                         ":reported_upper": {"S": "REPORTED"},
                         ":now": {"S": now_iso},
                         ":date_status": {"S": date_status},
+                        ":null_val": {"NULL": True},
                     },
                 }
             },
@@ -397,12 +415,15 @@ class DonationsRepository:
                     "TableName": self._config.recipients_table_name,
                     "Key": {"recipient_id": {"S": recipient_id}},
                     "UpdateExpression": (
-                        "SET capacity_kg_remaining = capacity_kg_remaining - :qty"
+                        "SET #cap = #cap - :qty"
                     ),
                     "ConditionExpression": (
                         "attribute_exists(recipient_id) AND "
-                        "capacity_kg_remaining >= :qty"
+                        "#cap >= :qty"
                     ),
+                    "ExpressionAttributeNames": {
+                        "#cap": "capacity_kg_remaining",
+                    },
                     "ExpressionAttributeValues": {":qty": {"N": str(quantity_kg)}},
                 }
             },
@@ -528,9 +549,12 @@ class DonationsRepository:
                     "TableName": self._config.recipients_table_name,
                     "Key": {"recipient_id": {"S": recipient_id}},
                     "UpdateExpression": (
-                        "SET capacity_kg_remaining = capacity_kg_remaining + :qty"
+                        "SET #cap = #cap + :qty"
                     ),
                     "ConditionExpression": "attribute_exists(recipient_id)",
+                    "ExpressionAttributeNames": {
+                        "#cap": "capacity_kg_remaining",
+                    },
                     "ExpressionAttributeValues": {
                         ":qty": {"N": str(quantity_kg)},
                     },

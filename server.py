@@ -181,15 +181,65 @@ def create_local_dev_service() -> FrontendApiService:
     return frontend_api
 
 
+def create_aws_production_service() -> FrontendApiService:
+    """Create production service connected directly to live AWS DynamoDB tables."""
+    import os
+
+    import boto3
+
+    from agent.orchestrator import StrandsOrchestrator
+    from audit_repo import AuditRepository
+    from config import load_app_configuration
+    from donations_repo import DonationsRepository
+    from recipients_repo import RecipientsRepository
+    from volunteers_repo import VolunteersRepository
+
+    if not os.environ.get("AWS_REGION"):
+        os.environ["AWS_REGION"] = "ap-south-1"
+    if not os.environ.get("ENVIRONMENT"):
+        os.environ["ENVIRONMENT"] = "dev"
+
+    config = load_app_configuration()
+    ddb = boto3.resource("dynamodb", region_name=config.aws_region)
+    donations_repo = DonationsRepository(dynamodb_resource=ddb, config=config)
+    recipients_repo = RecipientsRepository(dynamodb_resource=ddb, config=config)
+    volunteers_repo = VolunteersRepository(dynamodb_resource=ddb, config=config)
+    audit_repo = AuditRepository(dynamodb_resource=ddb, config=config)
+
+    orchestrator = StrandsOrchestrator(
+        donations_repo=donations_repo,
+        recipients_repo=recipients_repo,
+        volunteers_repo=volunteers_repo,
+        audit_repo=audit_repo,
+        config=config,
+    )
+    return FrontendApiService(
+        donations_repo=donations_repo,
+        recipients_repo=recipients_repo,
+        volunteers_repo=volunteers_repo,
+        audit_repo=audit_repo,
+        config=config,
+        orchestrator=orchestrator,
+    )
+
+
 def run_dev_server(port: int = 8080, use_mock: bool = False) -> None:
     """Run local development server listening on specified port."""
     if use_mock:
         LOGGER.info("Starting local server with in-memory mock and seed entities.")
         FrontendDevServerHandler.api_service = create_local_dev_service()
+    else:
+        LOGGER.info("Starting server connected directly to live AWS DynamoDB tables.")
+        FrontendDevServerHandler.api_service = create_aws_production_service()
 
     server_address = ("127.0.0.1", port)
     httpd = HTTPServer(server_address, FrontendDevServerHandler)
-    LOGGER.info("Surplus Router Frontend Server running at http://127.0.0.1:%d", port)
+    mode_str = "IN-MEMORY MOCK" if use_mock else "LIVE AWS DYNAMODB"
+    LOGGER.info(
+        "Surplus Router Frontend Server running at http://127.0.0.1:%d [%s mode]",
+        port,
+        mode_str,
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

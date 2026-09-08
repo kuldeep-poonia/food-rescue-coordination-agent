@@ -82,10 +82,15 @@
       }
       const readyByIso = new Date(readyByStr).toISOString();
 
+      let phone = document.getElementById("donor-input-phone").value.trim();
+      if (phone && !phone.startsWith("+") && /^\d{10}$/.test(phone)) {
+        phone = "+91" + phone;
+      }
+
       const payload = {
         donor_name: document.getElementById("donor-input-name").value.trim(),
         donor_id: document.getElementById("donor-input-id").value.trim(),
-        donor_phone: document.getElementById("donor-input-phone").value.trim(),
+        donor_phone: phone,
         food_category: document.getElementById("donor-select-category").value,
         quantity_kg: parseFloat(document.getElementById("donor-input-quantity").value),
         perishability_hours: parseFloat(document.getElementById("donor-input-perishability").value),
@@ -107,7 +112,12 @@
 
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || "Failed reporting donation");
+          let msg = data.error || "Failed reporting donation";
+          if (data.details && Array.isArray(data.details)) {
+            const detailStr = data.details.map(d => `${d.loc ? d.loc.slice(-1)[0] : 'field'}: ${d.msg}`).join('; ');
+            msg += `: ${detailStr}`;
+          }
+          throw new Error(msg);
         }
 
         showStatus(donorStatus, "success", `Donation ${data.donation_id} registered and coordinated!`);

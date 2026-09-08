@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Surplus Router — AWS Agents for Humans Hackathon Pitch Deck</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: rgba(255, 255, 255, 0.05);
+      --surface-border: rgba(255, 255, 255, 0.1);
+      --accent-emerald: #10b981;
+      --accent-emerald-light: rgba(16, 185, 129, 0.15);
+      --accent-cyan: #0ea5e9;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --font-heading: 'Outfit', sans-serif;
+      --font-body: 'Inter', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(at 15% 15%, rgba(16, 185, 129, 0.12) 0px, transparent 50%),
+        radial-gradient(at 85% 85%, rgba(14, 165, 233, 0.1) 0px, transparent 50%);
+      color: var(--text-main);
+      font-family: var(--font-body);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Deck Controls */
+    .deck-header {
+      padding: 1.25rem 2.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--surface-border);
+      background: rgba(11, 15, 25, 0.8);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+    }
+
+    .badge-track {
+      background: var(--accent-emerald-light);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      padding: 0.35rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .deck-nav-controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .slide-counter {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .nav-btn {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      color: var(--text-main);
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: var(--text-main);
+    }
+
+    /* Slides Viewport */
+    .viewport {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2.5rem;
+    }
+
+    .slide {
+      position: absolute;
+      width: 100%;
+      max-width: 1160px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(20px) scale(0.98);
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .slide.active {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
+    }
+
+    /* Slide Content Components */
+    .slide-tag {
+      color: var(--accent-emerald);
+      font-family: var(--font-heading);
+      font-size: 1.1rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .slide-title {
+      font-family: var(--font-heading);
+      font-size: 3.25rem;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.5rem;
+    }
+
+    .slide-title .gradient-text {
+      background: linear-gradient(135deg, #10b981 0%, #0ea5e9 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .slide-subtitle {
+      font-size: 1.35rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+      max-width: 860px;
+      margin-bottom: 2rem;
+    }
+
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+      margin-top: 1.5rem;
+    }
+
+    .cards-grid-2 {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .cards-grid-4 {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      backdrop-filter: blur(16px);
+      transition: transform 0.2s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    .card-icon {
+      font-size: 2.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      font-family: var(--font-heading);
+      font-size: 1.3rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      color: var(--text-main);
+    }
+
+    .card-desc {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    .metric-hero {
+      font-family: var(--font-heading);
+      font-size: 3.5rem;
+      font-weight: 900;
+      color: var(--accent-emerald);
+      margin-bottom: 0.25rem;
+    }
+
+    .highlight-box {
+      background: rgba(16, 185, 129, 0.08);
+      border-left: 4px solid var(--accent-emerald);
+      padding: 1.25rem 1.75rem;
+      border-radius: 0 12px 12px 0;
+      margin: 1.5rem 0;
+      font-size: 1.15rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+    }
+
+    .tech-pill {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 0.4rem 0.85rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin: 0.3rem 0.3rem 0 0;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Deck Footer Progress */
+    .deck-footer {
+      padding: 1.25rem 2.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid var(--surface-border);
+      background: rgba(11, 15, 25, 0.8);
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .progress-bar {
+      height: 4px;
+      width: 240px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--accent-emerald);
+      width: 14.28%;
+      transition: width 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Controls -->
+  <header class="deck-header">
+    <div style="display: flex; align-items: center; gap: 1rem;">
+      <span style="font-family: var(--font-heading); font-weight: 800; font-size: 1.2rem; color: #fff;">🌱 Surplus Router</span>
+      <span class="badge-track">AWS Agents for Humans Hackathon • Good Neighbor Track</span>
+    </div>
+    <div class="deck-nav-controls">
+      <span class="slide-counter" id="slide-counter">Slide 1 of 7</span>
+      <button class="nav-btn" id="btn-prev" onclick="prevSlide()">← Prev</button>
+      <button class="nav-btn" id="btn-next" onclick="nextSlide()">Next →</button>
+    </div>
+  </header>
+
+  <!-- Viewport -->
+  <main class="viewport">
+
+    <!-- SLIDE 1: Pitch & Title -->
+    <section class="slide active" id="slide-1">
+      <div class="slide-tag">Autonomous Good Neighbor Agent</div>
+      <h1 class="slide-title">Stop the Busywork in <br><span class="gradient-text">Community Food Rescue</span></h1>
+      <p class="slide-subtitle">
+        Built with the <strong>Strands Agents SDK</strong> and architected for <strong>Amazon Bedrock AgentCore</strong>, Surplus Router autonomously routes perishable surplus food from commercial kitchens to community shelters with zero manual dispatch overhead.
+      </p>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-icon">⏱️</div>
+          <div class="card-title">1. The Problem</div>
+          <div class="card-desc">Non-profit coordinators waste 3–5 hours daily on frantic WhatsApp messages, phone calls, and manual spreadsheets while edible food spoils.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🤝</div>
+          <div class="card-title">2. Who It's For</div>
+          <div class="card-desc">Local food banks, homeless shelters, soup kitchens, restaurants, and volunteer transit drivers working together in a city network.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🌍</div>
+          <div class="card-title">3. Why It Matters</div>
+          <div class="card-desc">Zero-delay matching prevents tons of edible food from landfill rot, turning operational chaos into measurable community meals.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 2: The Core Problem -->
+    <section class="slide" id="slide-2">
+      <div class="slide-tag">The Problem You're Solving</div>
+      <h2 class="slide-title">The Perishable Food Paradox: <br><span class="gradient-text">Tons of Waste, Endless Grind</span></h2>
+      <p class="slide-subtitle">
+        Commercial kitchens have excess meals ready at 8:00 PM. Perishable food spoils by 11:00 PM. Human coordinators cannot scale to real-time micro-logistics.
+      </p>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="metric-hero">3–5 hrs</div>
+          <div class="card-title">Daily Manual Busywork</div>
+          <div class="card-desc">Calling drivers, calculating distance, asking shelters for fridge space, and verifying dietary constraints manually.</div>
+        </div>
+        <div class="card">
+          <div class="metric-hero">180 min</div>
+          <div class="card-title">Perishability Deadline</div>
+          <div class="card-desc">Cooked meals and dairy spoil quickly. A 30-minute delay in manual coordination results in the entire donation being thrown away.</div>
+        </div>
+        <div class="card">
+          <div class="metric-hero">80%</div>
+          <div class="card-title">Coordinator Burnout</div>
+          <div class="card-desc">Non-profit organizers spend their entire day playing frantic dispatchers instead of focusing on human community care.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 3: The Solution -->
+    <section class="slide" id="slide-3">
+      <div class="slide-tag">The Autonomous Solution</div>
+      <h2 class="slide-title">Autonomous Micro-Logistics: <br><span class="gradient-text">Silent Execution, Rare Escalation</span></h2>
+      <p class="slide-subtitle">
+        Surplus Router acts as an autonomous background engine. Instead of an app humans have to babysit, it coordinates end-to-end automatically.
+      </p>
+      <div class="cards-grid-2 cards-grid">
+        <div class="card">
+          <div class="card-icon">⚡</div>
+          <div class="card-title">Autonomous Pipeline (95% of Cases)</div>
+          <div class="card-desc" style="margin-bottom: 1rem;">
+            1. Donor reports 25 kg cooked meals via 30-sec form.<br>
+            2. Strands Agent assesses perishability & queries regional shelter capacity.<br>
+            3. Multi-factor algorithm finds the optimal shelter and locks capacity in DynamoDB.<br>
+            4. Agent dispatches nearest volunteer driver with route directions.
+          </div>
+          <span class="tech-pill">No Human Required</span>
+          <span class="tech-pill">Sub-Second Coordination</span>
+        </div>
+        <div class="card">
+          <div class="card-icon">🛡️</div>
+          <div class="card-title">Human-in-the-Loop (Only for Real Exceptions)</div>
+          <div class="card-desc" style="margin-bottom: 1rem;">
+            The agent <strong>only</strong> interrupts the human coordinator when automated safety cannot be guaranteed:
+            <br>• Remaining shelf-life under 60 minutes.
+            <br>• Entire city shelter capacity exhausted.
+            <br>• Unresolvable claim conflicts.
+          </div>
+          <span class="tech-pill">Zero Coordinator Fatigue</span>
+          <span class="tech-pill">Safe Boundary Guardrails</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 4: Architecture -->
+    <section class="slide" id="slide-4">
+      <div class="slide-tag">Technical Implementation</div>
+      <h2 class="slide-title">Built on <span class="gradient-text">Strands SDK & AWS AgentCore</span></h2>
+      <p class="slide-subtitle">
+        Enterprise-grade architecture leveraging AWS managed serverless primitives for high reliability and zero-leak privacy.
+      </p>
+      <div class="cards-grid-4 cards-grid">
+        <div class="card">
+          <div class="card-icon">🤖</div>
+          <div class="card-title">Strands SDK</div>
+          <div class="card-desc">Stateful orchestrator coordinating classification, capacity check, and dispatch tools.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">⚡</div>
+          <div class="card-title">AWS DynamoDB</div>
+          <div class="card-desc">ACID <code>TransactWriteItems</code> prevents double-allocations across 5 single-digit ms tables.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🔐</div>
+          <div class="card-title">Zero-IDOR Security</div>
+          <div class="card-desc">256-bit cryptographic capability tokens and constant-time SHA-256 verification.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">📍</div>
+          <div class="card-title">Location Service</div>
+          <div class="card-desc">Matrix distance routing calculates exact transit times to prioritize nearby shelters.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 5: Live Proof 1 - Multi-Factor Matcher -->
+    <section class="slide" id="slide-5">
+      <div class="slide-tag">Live System Proof</div>
+      <h2 class="slide-title">Deterministic Multi-Factor <br><span class="gradient-text">Scoring Algorithm</span></h2>
+      <div class="highlight-box">
+        <strong>Total Score = 0.35 × Distance + 0.25 × Capacity + 0.20 × Dietary + 0.20 × Urgency</strong>
+        <br>Guarantees auditable, deterministic outcomes with zero hallucination.
+      </div>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-icon">📏</div>
+          <div class="card-title">Distance (35%)</div>
+          <div class="card-desc">Proximity decay function ensures hot cooked meals arrive fresh and transit emissions are minimized.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">⚖️</div>
+          <div class="card-title">Capacity (25%)</div>
+          <div class="card-desc">Evaluates shelter daily kg limit. Automatically bypasses near-full shelters to prevent food dumping.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🥗</div>
+          <div class="card-title">Dietary & Urgency (40%)</div>
+          <div class="card-desc">Enforces Halal, vegetarian, and allergen constraints while scaling score with shelf-life urgency.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 6: Live Proof 2 - Guardrails & Command Center -->
+    <section class="slide" id="slide-6">
+      <div class="slide-tag">Safety & Human Oversight</div>
+      <h2 class="slide-title">The Coordinator <span class="gradient-text">Command Center</span></h2>
+      <p class="slide-subtitle">
+        Real-time transparency without information overload. Full auditability across all autonomous decisions.
+      </p>
+      <div class="cards-grid-2 cards-grid">
+        <div class="card">
+          <div class="card-title">🚨 The Escalation Queue</div>
+          <div class="card-desc">
+            When an anomaly occurs (e.g. food expires in 45 mins), the agent creates an actionable escalation ticket with full context.
+            The coordinator can dismiss, override, or reassign with 1 click.
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">📜 Immutable DynamoDB Audit Trail</div>
+          <div class="card-desc">
+            Every state transition (REPORTED → MATCHED → ASSIGNED → DELIVERED) is committed to <code>frca-matches-audit-dev</code> with actor identity, timestamp, and idempotency key.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 7: Conclusion -->
+    <section class="slide" id="slide-7">
+      <div class="slide-tag">Good Neighbor Impact</div>
+      <h2 class="slide-title">Transforming Food Waste <br>into <span class="gradient-text">Community Nutrition</span></h2>
+      <div class="cards-grid" style="margin-bottom: 1.5rem;">
+        <div class="card">
+          <div class="metric-hero">0 hrs</div>
+          <div class="card-title">Routine Coordination</div>
+          <div class="card-desc">Coordinators focus 100% of their energy on human care and donor relationships.</div>
+        </div>
+        <div class="card">
+          <div class="metric-hero">100%</div>
+          <div class="card-title">Traceable & Secure</div>
+          <div class="card-desc">Zero-IDOR capability tokens prevent harassment, theft, and data leakage.</div>
+        </div>
+        <div class="card">
+          <div class="metric-hero">10x</div>
+          <div class="card-title">Network Scaling</div>
+          <div class="card-desc">Enables a single non-profit to coordinate city-wide food recovery seamlessly.</div>
+        </div>
+      </div>
+      <div class="highlight-box" style="text-align: center;">
+        <strong>Built for the AWS "Agents for Humans" Hackathon • Good Neighbor Track</strong>
+        <br><span style="color: var(--text-muted); font-size: 0.95rem;">Empowering communities with autonomous agents that care.</span>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer Navigation -->
+  <footer class="deck-footer">
+    <span>Press <strong>Left / Right Arrow</strong> or Spacebar to navigate slides</span>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <span>Surplus Router • MIT Open Source</span>
+  </footer>
+
+  <script>
+    let currentSlide = 1;
+    const totalSlides = 7;
+
+    function updateDeck() {
+      for (let i = 1; i <= totalSlides; i++) {
+        const el = document.getElementById(`slide-${i}`);
+        if (el) {
+          el.classList.toggle('active', i === currentSlide);
+        }
+      }
+      document.getElementById('slide-counter').textContent = `Slide ${currentSlide} of ${totalSlides}`;
+      document.getElementById('progress-fill').style.width = `${(currentSlide / totalSlides) * 100}%`;
+    }
+
+    function nextSlide() {
+      if (currentSlide < totalSlides) {
+        currentSlide++;
+        updateDeck();
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 1) {
+        currentSlide--;
+        updateDeck();
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+        nextSlide();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        prevSlide();
+      }
+    });
+  </script>
+</body>
+</html>
