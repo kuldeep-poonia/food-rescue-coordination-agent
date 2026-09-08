@@ -160,8 +160,33 @@ class FrontendDevServerHandler(BaseHTTPRequestHandler):
             self.send_error(500, "Internal Server Error")
 
 
-def run_dev_server(port: int = 8080) -> None:
+def create_local_dev_service() -> FrontendApiService:
+    """Create in-memory stateful service with seeded recipients and volunteers."""
+    from recipients_repo import RecipientsRepository
+    from tests.test_e2e_multi_day_simulation import (
+        create_simulation_environment,
+        seed_entities,
+    )
+    from volunteers_repo import VolunteersRepository
+
+    _, frontend_api, _, mock_dynamo, config = create_simulation_environment()
+    object.__setattr__(
+        frontend_api._config,
+        "coordinator_api_key",
+        "dev-insecure-coordinator-key-for-local-testing-only-32chars",
+    )
+    rec_repo = RecipientsRepository(dynamodb_resource=mock_dynamo, config=config)
+    vol_repo = VolunteersRepository(dynamodb_resource=mock_dynamo, config=config)
+    seed_entities(rec_repo, vol_repo)
+    return frontend_api
+
+
+def run_dev_server(port: int = 8080, use_mock: bool = False) -> None:
     """Run local development server listening on specified port."""
+    if use_mock:
+        LOGGER.info("Starting local server with in-memory mock and seed entities.")
+        FrontendDevServerHandler.api_service = create_local_dev_service()
+
     server_address = ("127.0.0.1", port)
     httpd = HTTPServer(server_address, FrontendDevServerHandler)
     LOGGER.info("Surplus Router Frontend Server running at http://127.0.0.1:%d", port)
@@ -175,5 +200,10 @@ def run_dev_server(port: int = 8080) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Surplus Router Local Server")
     parser.add_argument("--port", type=int, default=8080, help="Port to listen on")
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use in-memory mock repositories and seed entities for local testing",
+    )
     args = parser.parse_args()
-    run_dev_server(port=args.port)
+    run_dev_server(port=args.port, use_mock=args.mock)
