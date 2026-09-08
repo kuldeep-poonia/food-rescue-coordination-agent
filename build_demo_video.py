@@ -78,42 +78,50 @@ SCENES = [
     {
         "id": 5,
         "type": "screenshot",
-        "badge": "LIVE SYSTEM DEMONSTRATION • LOCALHOST:8080",
-        "title": "1. Commercial Donor Portal (Zero-IDOR Intake)",
-        "image": os.path.join(ARTIFACT_DIR, "donor_portal_view_1788872888145.png"),
-        "narration": "Here is our live Donor Portal. A restaurant reports 25 kilograms of prepared meals in thirty seconds. The agent instantly validates inputs, classifies perishability, and returns a cryptographic tracking receipt."
+        "badge": "LIVE PROOF 1 • DONOR INTAKE & ATOMIC ASSIGNMENT",
+        "title": "1. Live Donor Submission & Capability Token",
+        "image": os.path.join(ARTIFACT_DIR, "step1_submission_receipt_1788876258416.png"),
+        "narration": "Here is our live Donor Portal in action. We submit 15 kilograms of prepared meals from Golden Gate Bakery. The Strands Agent immediately queries regional shelters, commits an atomic DynamoDB transaction, and returns a secure cryptographic capability token with status assigned!"
     },
     {
         "id": 6,
         "type": "screenshot",
-        "badge": "LIVE SYSTEM DEMONSTRATION • LOCALHOST:8080",
-        "title": "2. Recipient Partner Capacity & Dietary Check-in",
-        "image": os.path.join(ARTIFACT_DIR, "recipient_partner_view_1788872958320.png"),
-        "narration": "Community shelters maintain their daily intake capacity here. Through DynamoDB ACID transactions, the agent automatically deducts shelter capacity, guaranteeing zero over-allocation."
+        "badge": "LIVE PROOF 2 • ZERO-IDOR CAPABILITY LOOKUP",
+        "title": "2. Live Zero-IDOR Tracking Verification",
+        "image": os.path.join(ARTIFACT_DIR, "step2_lookup_results_1788876526177.png"),
+        "narration": "Next, we test our Zero-IDOR capability tracking. We paste the secret token and click Verify and Track. The backend validates the cryptographic digest using constant-time SHA-256 comparison, displaying verified lifecycle state directly from DynamoDB with zero data leakage."
     },
     {
         "id": 7,
         "type": "screenshot",
-        "badge": "LIVE SYSTEM DEMONSTRATION • LOCALHOST:8080",
-        "title": "3. Autonomous Transit Volunteer Dispatch",
-        "image": os.path.join(ARTIFACT_DIR, "transit_volunteer_view_1788872998915.png"),
-        "narration": "The agent dispatches the nearest available volunteer driver based on vehicle type and transit window, providing exact pickup and delivery instructions with zero manual dispatch overhead."
+        "badge": "LIVE PROOF 3 • RECIPIENT CAPACITY MANAGEMENT",
+        "title": "3. Live Recipient Intake Check-in & Dietary Rules",
+        "image": os.path.join(ARTIFACT_DIR, "step3_recipient_updated_1788876742906.png"),
+        "narration": "On the Recipient Partner portal, shelter rec-shelter-01 checks in with an updated daily intake capacity of 200 kilograms and sets approved dietary constraints. The agent locks this capacity atomically to prevent over-allocation and food dumping."
     },
     {
         "id": 8,
         "type": "screenshot",
-        "badge": "LIVE SYSTEM DEMONSTRATION • LOCALHOST:8080",
-        "title": "4. Coordinator Command Center & Escalation Queue",
-        "image": os.path.join(ARTIFACT_DIR, "coordinator_authenticated_view_1788873110614.png"),
-        "narration": "In the Coordinator Command Center, human operators monitor live city-wide pipelines. When safety thresholds or capacity limits are breached, the agent flags an actionable escalation ticket for instant human resolution."
+        "badge": "LIVE PROOF 4 • TRANSIT VOLUNTEER DISPATCH",
+        "title": "4. Live Transit Volunteer Availability & Dispatch",
+        "image": os.path.join(ARTIFACT_DIR, "step4_volunteer_missions_updated_1788877451202.png"),
+        "narration": "On the Transit Volunteer portal, driver vol-car-01 updates vehicle dispatch availability to fifty kilograms. The agent synchronizes driver availability with active food recovery missions across the metropolitan area."
     },
     {
         "id": 9,
         "type": "screenshot",
+        "badge": "LIVE PROOF 5 • COORDINATOR COMMAND CENTER",
+        "title": "5. Live Pipeline Oversight & Escalation Queue",
+        "image": os.path.join(ARTIFACT_DIR, "step5_coordinator_dashboard_1788877625439.png"),
+        "narration": "In the Coordinator Command Center, human operators monitor live city-wide pipelines and the active escalation queue. When edge cases occur, coordinators can review the full context and resolve tickets with a single click."
+    },
+    {
+        "id": 10,
+        "type": "screenshot",
         "badge": "MEASURABLE COMMUNITY IMPACT • USDA ALIGNED",
-        "title": "5. Real-Time Impact Metrics & Conclusion",
-        "image": os.path.join(ARTIFACT_DIR, "impact_metrics_view_1788873171685.png"),
-        "narration": "Surplus Router turns food waste into community nutrition, tracking kilograms rescued and meals delivered. Built for the AWS Agents for Humans Hackathon, Good Neighbor Agents track. Thank you!"
+        "title": "6. Live Impact Metrics & Hackathon Conclusion",
+        "image": os.path.join(ARTIFACT_DIR, "step6_impact_metrics_1788877707813.png"),
+        "narration": "The system automatically tallies total kilograms rescued, non-profit partners fed, and active volunteers. Surplus Router transforms food rescue into a scalable, zero-waste reality. Built for the AWS Agents for Humans Hackathon, Good Neighbor Track. Thank you!"
     }
 ]
 

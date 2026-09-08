@@ -64,6 +64,38 @@
     readyByInput.value = localISOTime;
   }
 
+  // Pre-populate realistic demonstration coordinates matching active regional shelters
+  const latInput = document.getElementById("donor-input-lat");
+  const lonInput = document.getElementById("donor-input-lon");
+  const addrInput = document.getElementById("donor-input-address");
+  const nameInput = document.getElementById("donor-input-name");
+  const idInput = document.getElementById("donor-input-id");
+  const qtyInput = document.getElementById("donor-input-quantity");
+  const phoneInput = document.getElementById("donor-input-phone");
+  if (latInput && !latInput.value) latInput.value = "37.7760";
+  if (lonInput && !lonInput.value) lonInput.value = "-122.4190";
+  if (addrInput && !addrInput.value) addrInput.value = "500 Market St, Metro Core";
+  if (nameInput && !nameInput.value) nameInput.value = "Golden Gate Artisan Bakery";
+  if (idInput && !idInput.value) idInput.value = "donor-bakery-01";
+  if (qtyInput && !qtyInput.value) qtyInput.value = "15.0";
+  if (phoneInput && !phoneInput.value) phoneInput.value = "+919876543210";
+
+  // Pre-populate Recipient, Volunteer, and Coordinator demo inputs
+  const recIdInp = document.getElementById("recipient-input-id");
+  const recTokInp = document.getElementById("recipient-input-token");
+  const recCapInp = document.getElementById("recipient-input-capacity");
+  if (recIdInp && !recIdInp.value) recIdInp.value = "rec-soup-kitchen-01";
+  if (recTokInp && !recTokInp.value) recTokInp.value = "rec-secret-rec-soup-kitchen-01";
+  if (recCapInp && !recCapInp.value) recCapInp.value = "100";
+
+  const volIdInp = document.getElementById("volunteer-input-id");
+  const volTokInp = document.getElementById("volunteer-input-token");
+  if (volIdInp && !volIdInp.value) volIdInp.value = "vol-car-01";
+  if (volTokInp && !volTokInp.value) volTokInp.value = "vol-secret-vol-car-01";
+
+  const coordKeyInp = document.getElementById("coord-input-api-key");
+  if (coordKeyInp && !coordKeyInp.value) coordKeyInp.value = "dev-insecure-coordinator-key-for-local-testing-only-32chars";
+
   // ---------------------------------------------------------------------------
   // 1. Donor Portal: Report Donation & Zero-IDOR Tracking
   // ---------------------------------------------------------------------------

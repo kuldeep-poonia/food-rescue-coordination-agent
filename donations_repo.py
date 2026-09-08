@@ -251,7 +251,7 @@ class DonationsRepository:
             )
             cond_expr = (
                 "attribute_exists(donation_id) AND "
-                "attribute_not_exists(#avi) AND "
+                "(attribute_not_exists(#avi) OR #avi = :null_val) AND "
                 "(#st = :matched_status OR #st = :matched_upper)"
             )
             self._table.update_item(
@@ -269,6 +269,7 @@ class DonationsRepository:
                     ":assigned_status": DonationStatus.ASSIGNED.value,
                     ":matched_status": DonationStatus.MATCHED.value,
                     ":matched_upper": "MATCHED",
+                    ":null_val": None,
                     ":now": now_iso,
                     ":date_status": date_status,
                 },
