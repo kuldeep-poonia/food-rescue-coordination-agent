@@ -549,15 +549,37 @@ textarea:focus {
   border-radius: var(--radius-md);
 }
 
+.token-alert-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
 .token-alert-title {
   font-size: 0.85rem;
   font-weight: 700;
   color: var(--accent-emerald);
-  display: block;
-  margin-bottom: 0.5rem;
+}
+
+.token-badge-masked {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #047857;
+  background: #d1fae5;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  border: 1px solid #a7f3d0;
+}
+
+.token-code-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .token-code {
+  flex: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.85rem;
   color: #065f46;
@@ -568,6 +590,25 @@ textarea:focus {
   word-break: break-all;
   border: 1px solid var(--accent-emerald-border);
   font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.token-action-btn {
+  background: #ffffff;
+  color: #065f46;
+  border: 1px solid var(--accent-emerald-border);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.token-action-btn:hover {
+  background: #ecfdf5;
+  border-color: var(--accent-emerald);
 }
 
 .token-note {

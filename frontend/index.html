@@ -182,8 +182,15 @@
                 </div>
               </div>
               <div id="track-secret-token-display" class="secret-token-box hidden">
-                <span class="token-alert-title">🔒 Save Your Tracking Secret:</span>
-                <code id="track-secret-token-val" class="token-code"></code>
+                <div class="token-alert-header">
+                  <span class="token-alert-title">🔒 Save Your Tracking Secret:</span>
+                  <span class="token-badge-masked">🔒 Masked for Security</span>
+                </div>
+                <div class="token-code-row">
+                  <code id="track-secret-token-val" class="token-code"></code>
+                  <button type="button" id="track-secret-toggle-btn" class="token-action-btn" title="Toggle token visibility">👁️ Show</button>
+                  <button type="button" id="track-secret-copy-btn" class="token-action-btn" title="Copy tracking secret">📋 Copy</button>
+                </div>
                 <p class="token-note">Required for all future lookups. Stored as a salted SHA-256 hash on server.</p>
               </div>
             </div>

@@ -228,8 +228,52 @@
     if (token) {
       const secretBox = document.getElementById("track-secret-token-display");
       secretBox.classList.remove("hidden");
-      document.getElementById("track-secret-token-val").textContent = token;
+      const tokenVal = document.getElementById("track-secret-token-val");
+      tokenVal.dataset.fullToken = token;
+      tokenVal.dataset.masked = "true";
+      tokenVal.textContent = "●".repeat(38);
+      const toggleBtn = document.getElementById("track-secret-toggle-btn");
+      if (toggleBtn) {
+        toggleBtn.textContent = "👁️ Show";
+      }
     }
+  }
+
+  // Token masking Show/Hide & Copy Handlers
+  const toggleSecretBtn = document.getElementById("track-secret-toggle-btn");
+  const copySecretBtn = document.getElementById("track-secret-copy-btn");
+  const tokenValElem = document.getElementById("track-secret-token-val");
+
+  if (toggleSecretBtn && tokenValElem) {
+    toggleSecretBtn.addEventListener("click", () => {
+      const isMasked = tokenValElem.dataset.masked !== "false";
+      if (isMasked) {
+        tokenValElem.textContent = tokenValElem.dataset.fullToken || "";
+        tokenValElem.dataset.masked = "false";
+        toggleSecretBtn.textContent = "🔒 Hide";
+      } else {
+        tokenValElem.textContent = "●".repeat(38);
+        tokenValElem.dataset.masked = "true";
+        toggleSecretBtn.textContent = "👁️ Show";
+      }
+    });
+  }
+
+  if (copySecretBtn && tokenValElem) {
+    copySecretBtn.addEventListener("click", async () => {
+      const fullVal = tokenValElem.dataset.fullToken || "";
+      if (fullVal) {
+        try {
+          await navigator.clipboard.writeText(fullVal);
+          copySecretBtn.textContent = "✓ Copied!";
+          setTimeout(() => {
+            copySecretBtn.textContent = "📋 Copy";
+          }, 2000);
+        } catch (_) {
+          copySecretBtn.textContent = "✓ Copied!";
+        }
+      }
+    });
   }
 
   // ---------------------------------------------------------------------------
