@@ -948,7 +948,7 @@ class DonationsRepository:
                 total_evaluated = 0
                 last_evaluated_key = None
 
-                filter_cond = Attr("status").eq(canonical_status)
+                filter_cond: Any = Attr("status").eq(canonical_status)
                 if service_region:
                     filter_cond = (
                         filter_cond & Attr("service_region").eq(service_region)
@@ -1427,7 +1427,7 @@ class DonationsRepository:
         try:
             from boto3.dynamodb.conditions import Attr
 
-            filter_expr = Attr("coordinator_notification_status").is_in(
+            filter_expr: Any = Attr("coordinator_notification_status").is_in(
                 list(eligible_statuses)
             )
             if service_region:

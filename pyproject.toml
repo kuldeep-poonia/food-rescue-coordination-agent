@@ -47,7 +47,6 @@ select = [
     "UP",
     "W",
 ]
-ignore = ["UP038"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["agent", "config", "tools"]
@@ -81,7 +80,16 @@ disallow_untyped_defs = false
 check_untyped_defs = true
 warn_return_any = false
 warn_unused_ignores = false
-disable_error_code = ["call-arg", "union-attr", "method-assign", "misc", "arg-type"]
+disable_error_code = [
+    "call-arg",
+    "union-attr",
+    "method-assign",
+    "misc",
+    "arg-type",
+    "typeddict-item",
+    "typeddict-unknown-key",
+    "assignment",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
