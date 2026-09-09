@@ -5,6 +5,7 @@
 [![Linter](https://img.shields.io/badge/Ruff-0%20Errors%20%7C%20Clean-blue.svg)]()
 [![AWS Framework](https://img.shields.io/badge/AWS-Strands%20Agents%20SDK%20%7C%20Bedrock%20AgentCore-orange.svg)]()
 [![Database](https://img.shields.io/badge/Amazon%20DynamoDB-ACID%20Conditional%20Transactions-blueviolet.svg)]()
+[![YouTube Demo](https://img.shields.io/badge/YouTube-Watch%20Demo-red?logo=youtube)](https://youtu.be/c3ywTNW5Nys)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 > **AWS "Agents for Humans" Hackathon Submission**  
@@ -314,11 +315,15 @@ The agent never makes guesses when safety or fairness is compromised. It automat
 
 ## 🎬 Live End-to-End System Proof & Demo Video
 
-### 📹 Hackathon Demo Video
-The repository includes a ready-to-watch **1080p Full HD video** demonstrating the entire system:
-* **File:** **[`final_demo_video.mp4`](final_demo_video.mp4)**
-* **Duration:** 2 minutes 52 seconds (well within the ≤ 5:00 hackathon requirement).
-* **Audio:** Synchronized voiceover explaining the crisis, AWS architecture, and live proof.
+### 📹 Official Hackathon Video Demo
+> 📺 **Watch the complete live walkthrough on YouTube:**  
+> **Link for demo:** **[https://youtu.be/c3ywTNW5Nys](https://youtu.be/c3ywTNW5Nys)**
+
+[![Watch Surplus Router Demo](https://img.youtube.com/vi/c3ywTNW5Nys/maxresdefault.jpg)](https://youtu.be/c3ywTNW5Nys)
+
+* **YouTube Video (For Demo):** [https://youtu.be/c3ywTNW5Nys](https://youtu.be/c3ywTNW5Nys)
+* **Duration:** 2 minutes 52 seconds (synchronized 1080p Full HD audio/visual demonstration)
+* **Highlights:** Live donor surplus submission, cryptographic Zero-IDOR capability tokens, DynamoDB ACID transactional allocation, transit volunteer availability, and CloudWatch metrics.
 
 ### 📸 Live Dashboard Verification Proofs
 During our live verification against AWS DynamoDB (`ap-south-1`), the following sequence was executed and captured:
@@ -412,7 +417,6 @@ food-rescue-coordination-agent/
 ├── recipients_repo.py             # DynamoDB recipient persistence & atomic claims
 ├── volunteers_repo.py             # DynamoDB volunteer availability & shifts
 ├── server.py                      # FastAPI / Starlette coordination API server
-├── build_demo_video.py            # Automated 1080p MP4 demo video generator
 ├── requirements.txt               # Locked production dependencies
 ├── LICENSE                        # MIT Open Source License
 └── README.md                      # Comprehensive project documentation

@@ -64,7 +64,7 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 
-exclude = ["build_demo_video\\.py", "scratch", "video_scratch"]
+exclude = ["scratch", "video_scratch"]
 
 [[tool.mypy.overrides]]
 module = ["boto3.*", "botocore.*", "yaml.*", "yaml"]
