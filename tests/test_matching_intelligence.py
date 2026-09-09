@@ -93,7 +93,7 @@ def build_sample_donation(
     status: DonationStatus = DonationStatus.REPORTED,
 ) -> Donation:
     """Construct a clean valid Donation model for testing."""
-    now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     return Donation(
         donation_id=donation_id,
         donor_id="donor-kitchen-01",
@@ -147,7 +147,7 @@ def test_food_safety_threshold_exact_boundaries() -> None:
     - 3600s (60m 00s): Safe (boundary) -> Allowed; match succeeds.
     - 3601s (60m 01s): Safe -> Allowed; match succeeds.
     """
-    fixed_now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    fixed_now = datetime.now(timezone.utc)
     candidates = [
         build_sample_recipient(
             "rec-01",
@@ -265,7 +265,7 @@ def test_deterministic_tie_breaking_recipient_and_volunteer() -> None:
     - Equal score + equal distance -> recipient_id wins (lexicographical)
     - Equal volunteer distance -> volunteer_id wins (lexicographical)
     """
-    fixed_now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    fixed_now = datetime.now(timezone.utc)
     donation = build_sample_donation(
         donation_id="don-tie-01",
         quantity_kg=20.0,
@@ -447,7 +447,7 @@ def test_deterministic_tie_breaking_recipient_and_volunteer() -> None:
 # ------------------------------------------------------------------------------
 def test_scoring_stability_across_one_hundred_shuffled_runs() -> None:
     """Run matching 100 times with shuffled candidates and assert determinism."""
-    fixed_now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    fixed_now = datetime.now(timezone.utc)
     donation = build_sample_donation(
         donation_id="don-stability-100",
         quantity_kg=25.0,
@@ -512,7 +512,7 @@ def test_scoring_stability_across_one_hundred_shuffled_runs() -> None:
 # ------------------------------------------------------------------------------
 def test_location_service_unavailable_error_propagates_from_find_best_match() -> None:
     """Verify find_best_match propagates LocationServiceUnavailableError directly."""
-    fixed_now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    fixed_now = datetime.now(timezone.utc)
     donation = build_sample_donation(
         donation_id="don-propagate-01",
         ready_by=fixed_now,
@@ -587,7 +587,7 @@ def test_orchestrator_matching_degraded_dependency_escalation() -> None:
         allow_fallback=False,  # Strict production default
     )
 
-    fixed_now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    fixed_now = datetime.now(timezone.utc)
     donation = build_sample_donation(
         donation_id="don-degraded-01",
         ready_by=fixed_now + timedelta(hours=2),
@@ -656,7 +656,7 @@ def test_orchestrator_volunteer_dispatch_degraded_dependency_escalation() -> Non
     v_repo = VolunteersRepository(dynamodb_resource=mock_resource, config=config)
     a_repo = AuditRepository(dynamodb_resource=mock_resource, config=config)
 
-    fixed_now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    fixed_now = datetime.now(timezone.utc)
     donation = build_sample_donation(
         donation_id="don-degraded-vol",
         ready_by=fixed_now + timedelta(hours=2),
@@ -816,7 +816,7 @@ def test_location_privacy_and_sanitization(caplog: pytest.LogCaptureFixture) -> 
         donor_coordinates=Coordinates(latitude=secret_lat, longitude=secret_lon),
         food_category=FoodCategory.PREPARED_MEALS,
         quantity_kg=15.0,
-        ready_by=datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc),
+        ready_by=datetime.now(timezone.utc),
         perishability_hours=5.0,
         service_region="metro-core",
         status=DonationStatus.REPORTED,

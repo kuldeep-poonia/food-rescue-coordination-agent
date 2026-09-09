@@ -207,7 +207,8 @@ def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]
         Structured response dictionary.
     """
     del context
-    headers = event.get("headers") if isinstance(event.get("headers"), dict) else {}
+    raw_headers = event.get("headers")
+    headers: dict[str, Any] = raw_headers if isinstance(raw_headers, dict) else {}
     cid = (
         headers.get("x-correlation-id")
         or headers.get("X-Correlation-Id")

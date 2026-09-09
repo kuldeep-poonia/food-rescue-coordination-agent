@@ -152,7 +152,7 @@ def test_resource_ownership_enforcement_zero_idor() -> None:
 
     token_b = "secret-token-donor-bravo-32chars-long!"
 
-    now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     don_a = Donation(
         donation_id="don-alpha",
         donor_id="donor-1",

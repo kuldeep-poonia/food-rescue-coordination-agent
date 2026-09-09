@@ -91,7 +91,7 @@ class DonationsRepository:
                     "dynamodb", region_name=self._config.aws_region
                 )
             else:
-                self._client: Any = client if client is not None else dynamodb_resource
+                self._client = client if client is not None else dynamodb_resource
         else:
             import boto3
 

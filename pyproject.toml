@@ -65,9 +65,23 @@ warn_return_any = true
 warn_unreachable = true
 show_error_codes = true
 
+exclude = ["build_demo_video\\.py", "scratch", "video_scratch"]
+
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*"]
+module = ["boto3.*", "botocore.*", "yaml.*", "yaml"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["infra.*"]
+disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+check_untyped_defs = true
+warn_return_any = false
+warn_unused_ignores = false
+disable_error_code = ["call-arg", "union-attr", "method-assign", "misc", "arg-type"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -68,11 +68,13 @@ class StructuredJsonFormatter(logging.Formatter):
         if record.exc_info:
             raw_exc = self.formatException(record.exc_info)
             payload["exception"] = sanitize_text_for_logging(raw_exc)
-        elif getattr(record, "exc_text", None):
-            payload["exception"] = sanitize_text_for_logging(record.exc_text)
+        exc_text = getattr(record, "exc_text", None)
+        if exc_text:
+            payload["exception"] = sanitize_text_for_logging(str(exc_text))
 
-        if getattr(record, "stack_info", None):
-            raw_stack = self.formatStack(record.stack_info)
+        stack_info = getattr(record, "stack_info", None)
+        if stack_info:
+            raw_stack = self.formatStack(str(stack_info))
             payload["stack_info"] = sanitize_text_for_logging(raw_stack)
 
         return json.dumps(payload)

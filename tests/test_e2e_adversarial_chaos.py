@@ -143,7 +143,10 @@ class ConcurrentMockTable:
                         {"Error": {"Code": "ConditionalCheckFailedException"}},
                         "UpdateItem",
                     )
-                if "capacity_kg_remaining >= :qty" in ConditionExpression:
+                if (
+                    "capacity_kg_remaining >= :qty" in ConditionExpression
+                    or "#cap >= :qty" in ConditionExpression
+                ):
                     qty = float(vals.get(":qty", 0))
                     if float(item.get("capacity_kg_remaining", 0)) < qty:
                         raise ClientError(
@@ -329,7 +332,10 @@ class ConcurrentMockDynamoDBResource:
                         st = existing.get("status") if existing else None
                         if st not in (DonationStatus.REPORTED.value, "REPORTED"):
                             failed = True
-                    if "capacity_kg_remaining >= :qty" in cond:
+                    if (
+                        "capacity_kg_remaining >= :qty" in cond
+                        or "#cap >= :qty" in cond
+                    ):
                         qty = float(u["ExpressionAttributeValues"][":qty"]["N"])
                         curr_cap = (
                             float(existing.get("capacity_kg_remaining", 0.0))

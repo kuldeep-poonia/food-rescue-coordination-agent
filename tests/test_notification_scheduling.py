@@ -87,7 +87,7 @@ def test_missed_window_escalation_deduplication() -> None:
         bedrock_agent_alias_id="alias",
     )
 
-    now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     expired_ready_by = now - timedelta(minutes=15)  # 15 minutes in past
 
     expired_donation = Donation(
@@ -106,6 +106,9 @@ def test_missed_window_escalation_deduplication() -> None:
     # Simulate time passing so ready_by is now in the past
     expired_donation_dict = expired_donation.model_dump(mode="json")
     expired_donation_dict["ready_by"] = expired_ready_by.isoformat()
+    expired_donation_dict["created_at"] = (
+        expired_ready_by - timedelta(hours=1)
+    ).isoformat()
     expired_donation_dict["status"] = DonationStatus.REPORTED.value
 
     # GSI query returns this expired donation
@@ -577,7 +580,7 @@ def test_concurrent_notification_claim_mutual_exclusion() -> None:
     d_repo = DonationsRepository(dynamodb_resource=mock_resource, config=config)
     a_repo = AuditRepository(dynamodb_resource=mock_resource, config=config)
 
-    now = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     donation = Donation(
         donation_id="don-claim-race-01",
         donor_id="donor-01",
@@ -683,7 +686,7 @@ def test_crash_recovery_after_claim_lease_expired() -> None:
         sns_client=mock_sns,
     )
 
-    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime.now(timezone.utc)
     base_donation = Donation(
         donation_id="don-lease-01",
         donor_id="donor-01",
@@ -766,7 +769,7 @@ def test_ambiguous_transport_timeout_preserves_claimed_state() -> None:
         sns_client=mock_sns,
     )
 
-    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime.now(timezone.utc)
     donation = Donation(
         donation_id="don-ambiguous-01",
         donor_id="donor-01",
@@ -833,7 +836,7 @@ def test_already_delivered_notification_safe_noop() -> None:
         sns_client=mock_sns,
     )
 
-    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime.now(timezone.utc)
     donation = Donation(
         donation_id="don-delivered-01",
         donor_id="donor-01",
@@ -904,7 +907,7 @@ def test_permanent_sns_failure_transitions_to_failed() -> None:
         sns_client=mock_sns,
     )
 
-    t0 = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime.now(timezone.utc)
     donation = Donation(
         donation_id="don-failed-01",
         donor_id="donor-01",
@@ -972,8 +975,9 @@ def test_recovery_audit_and_bounded_query_privacy() -> None:
         "Query",
     )
 
-    t0_iso = "2026-09-07T12:00:00+00:00"
-    future_iso = "2026-09-07T14:00:00+00:00"
+    t0_dt = datetime.now(timezone.utc)
+    t0_iso = t0_dt.isoformat()
+    future_iso = (t0_dt + timedelta(hours=2)).isoformat()
     scanned_items = [
         {
             "donation_id": f"don-recov-{i}",

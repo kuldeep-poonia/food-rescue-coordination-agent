@@ -590,7 +590,7 @@ def test_day_1_autonomous_multi_party_surge() -> None:
 
     seed_entities(recipients_repo, volunteers_repo)
 
-    now = datetime(2026, 9, 8, 8, 0, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
 
     # 4 Surge Donations across morning, afternoon, and evening
     donations_data = [
@@ -723,8 +723,9 @@ def test_day_2_rollover_depleted_bypass_restock_and_shifts() -> None:
 
     seed_entities(recipients_repo, volunteers_repo)
 
-    day1_date = datetime(2026, 9, 8, 12, 0, 0, tzinfo=timezone.utc)
-    day2_date = datetime(2026, 9, 9, 9, 0, 0, tzinfo=timezone.utc)
+    day2_date = datetime.now(timezone.utc)
+    day1_date = day2_date - timedelta(days=1)
+    day1_str = day1_date.strftime("%Y-%m-%d")
 
     # 1. Simulate Day 1 completed donation with Day 1 date_status
     don_day1 = Donation(
@@ -742,7 +743,7 @@ def test_day_2_rollover_depleted_bypass_restock_and_shifts() -> None:
         status=DonationStatus.ASSIGNED,
         matched_recipient_id="rec-youth-center-01",
         assigned_volunteer_id="vol-bike-01",
-        date_status="2026-09-08#assigned",
+        date_status=f"{day1_str}#assigned",
         created_at=day1_date,
     )
     donations_repo.create_donation(don_day1)
@@ -757,7 +758,7 @@ def test_day_2_rollover_depleted_bypass_restock_and_shifts() -> None:
 
     # 2. Midnight Rollover: EventBridge daily reconciliation query
     daily_summary = donations_repo.get_authoritative_daily_summary(
-        "metro-core", "2026-09-08"
+        "metro-core", day1_str
     )
     assert daily_summary.total_kg_routed >= 15.0
 

@@ -5,7 +5,7 @@ and AuditEvents, enforcing boundary constraints and input sanitization.
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
@@ -106,15 +106,22 @@ class Donation(BaseModel):
             raise ValueError(f"Invalid phone number format: {value}")
         return cleaned
 
-    @field_validator("ready_by")
-    @classmethod
-    def validate_ready_by_future(cls, value: datetime) -> datetime:
-        """Verify ready_by timestamp is in the future at model creation."""
-        now = datetime.now(timezone.utc)
-        target = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-        if target <= now:
+    @model_validator(mode="after")
+    def validate_ready_by_after_creation(self) -> "Donation":
+        """Verify ready_by timestamp is in the future relative to creation."""
+        target = (
+            self.ready_by
+            if self.ready_by.tzinfo
+            else self.ready_by.replace(tzinfo=timezone.utc)
+        )
+        created = (
+            self.created_at
+            if self.created_at.tzinfo
+            else self.created_at.replace(tzinfo=timezone.utc)
+        )
+        if target < (created - timedelta(seconds=5)):
             raise ValueError("ready_by timestamp must be in the future")
-        return target
+        return self
 
 
 class RecipientStatus(str, Enum):

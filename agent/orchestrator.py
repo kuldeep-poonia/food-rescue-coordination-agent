@@ -1177,7 +1177,6 @@ class StrandsOrchestrator:
                 )
                 self.coordinate_donation(
                     donation_id=donation.donation_id,
-                    service_region=service_region,
                     correlation_id=corr_id,
                 )
                 coordinated_count += 1
