@@ -157,7 +157,7 @@ def sanitize_sns_error_detail(exc: Exception) -> str:
     if exc_class_name in ALLOWLISTED_SNS_ERROR_CODES:
         return ALLOWLISTED_SNS_ERROR_CODES[exc_class_name]
 
-    if isinstance(exc, (TimeoutError, ConnectionError, BotoCoreError)):
+    if isinstance(exc, TimeoutError | ConnectionError | BotoCoreError):
         return f"{exc_class_name}: Network or transport connection failure"
 
     return DEFAULT_SAFE_ERROR_DETAIL
@@ -168,7 +168,7 @@ def is_retryable_sns_error(exc: Exception) -> bool:
     if isinstance(exc, ClientError):
         code = exc.response.get("Error", {}).get("Code", "")
         return code in RETRYABLE_SNS_ERROR_CODES
-    return isinstance(exc, (TimeoutError, ConnectionError, BotoCoreError))
+    return isinstance(exc, TimeoutError | ConnectionError | BotoCoreError)
 
 
 def is_ambiguous_transport_error(exc: Exception) -> bool:
@@ -178,7 +178,7 @@ def is_ambiguous_transport_error(exc: Exception) -> bool:
     but response was not received or connection timed out, so external delivery
     status cannot be definitively known.
     """
-    if isinstance(exc, (TimeoutError, ConnectionError)):
+    if isinstance(exc, TimeoutError | ConnectionError):
         return True
     exc_name = exc.__class__.__name__
     if exc_name in (

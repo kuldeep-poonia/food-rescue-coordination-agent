@@ -47,7 +47,7 @@ select = [
     "UP",
     "W",
 ]
-ignore = []
+ignore = ["UP038"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["agent", "config", "tools"]

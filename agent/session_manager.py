@@ -349,7 +349,7 @@ class AgentSessionManager:
     def _item_to_session_context(item: dict[str, Any]) -> SessionContext:
         """Convert raw DynamoDB item to validated SessionContext model."""
         raw_recipients = item.get("recipients_near_capacity", [])
-        if isinstance(raw_recipients, (set, frozenset, list)):
+        if isinstance(raw_recipients, set | frozenset | list):
             recipients_list = sorted(raw_recipients)
         else:
             recipients_list = []
