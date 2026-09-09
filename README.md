@@ -413,7 +413,6 @@ food-rescue-coordination-agent/
 ├── volunteers_repo.py             # DynamoDB volunteer availability & shifts
 ├── server.py                      # FastAPI / Starlette coordination API server
 ├── build_demo_video.py            # Automated 1080p MP4 demo video generator
-├── final_demo_video.mp4           # 1080p Full HD Hackathon submission video
 ├── requirements.txt               # Locked production dependencies
 ├── LICENSE                        # MIT Open Source License
 └── README.md                      # Comprehensive project documentation
