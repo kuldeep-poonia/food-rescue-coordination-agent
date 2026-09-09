@@ -328,14 +328,14 @@ The agent never makes guesses when safety or fairness is compromised. It automat
 ### 📸 Live Dashboard Verification Proofs
 During our live verification against AWS DynamoDB (`ap-south-1`), the following sequence was executed and captured:
 
-| Step | Live Action | Captured Proof Screenshot |
+| Step | Live Action | Verification & Video Proof |
 | :--- | :--- | :--- |
-| **Step 1** | **Donor Intake**: 35 kg organic produce submitted; live status `ASSIGNED` to `Downtown Hope Shelter` and volunteer `Alex Rivera`. | [View Receipt](file:///C:/Users/kuldeep/.gemini/antigravity-ide/brain/bbdfb2b1-6d94-4e21-b3a8-0c73f419d853/step1_submission_receipt_1788876258416.png) |
-| **Step 2** | **Capability Token Lookup**: Status verified without login; zero-IDOR privacy confirmed. | [View Lookup](file:///C:/Users/kuldeep/.gemini/antigravity-ide/brain/bbdfb2b1-6d94-4e21-b3a8-0c73f419d853/step2_lookup_results_1788876526177.png) |
-| **Step 3** | **Recipient Capacity**: Shelter `rec-soup-kitchen-01` adjusted intake capacity to 200 kg with atomic DynamoDB write. | [View Recipient](file:///C:/Users/kuldeep/.gemini/antigravity-ide/brain/bbdfb2b1-6d94-4e21-b3a8-0c73f419d853/step3_recipient_updated_1788876742906.png) |
-| **Step 4** | **Volunteer Missions**: Driver `vol-car-01` toggled available; live dispatch cards rendered. | [View Missions](file:///C:/Users/kuldeep/.gemini/antigravity-ide/brain/bbdfb2b1-6d94-4e21-b3a8-0c73f419d853/step4_volunteer_missions_updated_1788877451202.png) |
-| **Step 5** | **Coordinator Triage**: Coordinator logged in, reviewed active pipeline, and resolved escalation ticket. | [View Command Center](file:///C:/Users/kuldeep/.gemini/antigravity-ide/brain/bbdfb2b1-6d94-4e21-b3a8-0c73f419d853/step5_coordinator_dashboard_1788877625439.png) |
-| **Step 6** | **Impact Metrics**: Verified 1,280 kg rescued, 2,688 meals, and 3.20 MT CO₂ avoided. | [View Metrics](file:///C:/Users/kuldeep/.gemini/antigravity-ide/brain/bbdfb2b1-6d94-4e21-b3a8-0c73f419d853/step6_impact_metrics_1788877707813.png) |
+| **Step 1** | **Donor Intake**: 35 kg organic produce submitted; live status `ASSIGNED` to `Downtown Hope Shelter` and volunteer `Alex Rivera`. | [Watch in Demo Video (0:40)](https://youtu.be/c3ywTNW5Nys?t=40) |
+| **Step 2** | **Capability Token Lookup**: Status verified without login; zero-IDOR privacy confirmed. | [Watch in Demo Video (1:05)](https://youtu.be/c3ywTNW5Nys?t=65) |
+| **Step 3** | **Recipient Capacity**: Shelter `rec-soup-kitchen-01` adjusted intake capacity to 200 kg with atomic DynamoDB write. | [Watch in Demo Video (1:30)](https://youtu.be/c3ywTNW5Nys?t=90) |
+| **Step 4** | **Volunteer Missions**: Driver `vol-car-01` toggled available; live dispatch cards rendered. | [Watch in Demo Video (1:50)](https://youtu.be/c3ywTNW5Nys?t=110) |
+| **Step 5** | **Coordinator Triage**: Coordinator logged in, reviewed active pipeline, and resolved escalation ticket. | [Watch in Demo Video (2:10)](https://youtu.be/c3ywTNW5Nys?t=130) |
+| **Step 6** | **Impact Metrics**: Verified 1,280 kg rescued, 2,688 meals, and 3.20 MT CO₂ avoided. | [Watch in Demo Video (2:30)](https://youtu.be/c3ywTNW5Nys?t=150) |
 
 ---
 

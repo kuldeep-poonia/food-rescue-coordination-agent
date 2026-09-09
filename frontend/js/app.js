@@ -78,7 +78,7 @@
   if (nameInput && !nameInput.value) nameInput.value = "Golden Gate Artisan Bakery";
   if (idInput && !idInput.value) idInput.value = "donor-bakery-01";
   if (qtyInput && !qtyInput.value) qtyInput.value = "15.0";
-  if (phoneInput && !phoneInput.value) phoneInput.value = "+919876543210";
+  if (phoneInput && !phoneInput.value) phoneInput.value = "+14155550199";
 
   // Pre-populate Recipient, Volunteer, and Coordinator demo inputs
   const recIdInp = document.getElementById("recipient-input-id");
